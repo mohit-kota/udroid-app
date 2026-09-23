@@ -61,11 +61,32 @@ class TerminalTabRegistryTest {
         assertNull(registry.activeId)
     }
 
-    private fun tab(id: String) =
+    @Test
+    fun `tabs preserve independent rootfs assignments`() {
+        val registry = TerminalTabRegistry<Any>()
+        registry.add(tab("ubuntu", rootfsName = "udroid-jammy-raw"))
+        registry.add(tab("debian", rootfsName = "debian-bookworm"))
+
+        registry.select("ubuntu")
+
+        assertEquals("udroid-jammy-raw", registry.active()?.rootfsName)
+        assertEquals("debian-bookworm", registry.get("debian")?.rootfsName)
+    }
+
+    @Test
+    fun `rootfs names become readable distro titles`() {
+        assertEquals("Ubuntu Jammy", terminalDistroTitle("udroid-jammy-raw"))
+        assertEquals("Debian Bookworm", terminalDistroTitle("debian-bookworm"))
+    }
+
+    private fun tab(
+        id: String,
+        rootfsName: String = "ubuntu",
+    ) =
         TerminalTab(
             id = id,
             title = "Terminal $id",
-            rootfsName = "ubuntu",
+            rootfsName = rootfsName,
             value = Any(),
         )
 }
