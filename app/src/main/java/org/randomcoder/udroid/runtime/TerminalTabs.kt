@@ -9,6 +9,21 @@ data class TerminalTabSnapshot(
     val active: Boolean,
 )
 
+fun terminalDistroTitle(rawName: String?): String =
+    when {
+        rawName.isNullOrBlank() -> "Linux"
+        rawName.contains("focal", ignoreCase = true) -> "Ubuntu Focal"
+        rawName.contains("jammy", ignoreCase = true) -> "Ubuntu Jammy"
+        rawName.contains("noble", ignoreCase = true) -> "Ubuntu Noble"
+        rawName.contains("resolute", ignoreCase = true) -> "Ubuntu Resolute"
+        else ->
+            rawName
+                .removePrefix("udroid-")
+                .removeSuffix("-raw")
+                .split('-')
+                .joinToString(" ") { word -> word.replaceFirstChar(Char::titlecase) }
+    }
+
 internal data class TerminalTab<T>(
     val id: String,
     var title: String,

@@ -159,7 +159,7 @@ class InstallerService : Service() {
                 work = work,
                 stage = InstallStage.CHECKING,
                 stageProgress = 0f,
-                currentDetail = "Preparing secure download storage",
+                currentDetail = "Preparing the download",
                 terminalLines = startingLines,
                 previewOnly = false,
                 completedBytes = previous?.completedBytes ?: 0L,
@@ -194,7 +194,7 @@ class InstallerService : Service() {
         val distro = work.distro
         val operationId = work.operationId
         val rootfsDirectory = File(filesDir, "rootfs")
-        val installedRootfs = File(rootfsDirectory, distro.internalName)
+        val installedRootfs = File(rootfsDirectory, work.installationName)
         if (File(installedRootfs, RootfsInstallationPipeline.READY_MARKER).isFile) {
             publishCompleted(work, installedRootfs, reused = true)
             finishOperation(operation)
@@ -225,7 +225,7 @@ class InstallerService : Service() {
                     work = work,
                     stage = InstallStage.ARCHIVE_READY,
                     stageProgress = 1f,
-                    currentDetail = "${formatBytes(result.byteCount)} verified; preparing extraction",
+                    currentDetail = "Download verified; preparing installation",
                     terminalLines =
                         previous?.terminalLines.orEmpty() +
                             if (result.reusedVerifiedFile) {
@@ -283,7 +283,7 @@ class InstallerService : Service() {
                     InstallProgress(
                         work = work,
                         stage = InstallStage.FAILED,
-                        stageProgress = 0f,
+                        stageProgress = previous?.overallProgress ?: 0f,
                         currentDetail = error.message ?: error.javaClass.simpleName,
                         terminalLines =
                             previous?.terminalLines.orEmpty() +
@@ -328,7 +328,7 @@ class InstallerService : Service() {
                 work = work,
                 stage = InstallStage.CHECKING,
                 stageProgress = 0f,
-                currentDetail = "Preparing secure OCI image storage",
+                currentDetail = "Preparing the image download",
                 terminalLines =
                     previous?.terminalLines.orEmpty() +
                         if (previous?.stage == InstallStage.PAUSED) {
@@ -444,12 +444,12 @@ class InstallerService : Service() {
         val operationId = work.operationId
         RootfsInstallationPipeline.clearInterruptedInstallation(
             rootfsDirectory = rootfsDirectory,
-            installationName = distro.internalName,
+            installationName = work.installationName,
         )
         RootfsStoragePreflight.requireSpace(archive, rootfsDirectory)
         progressPublisher.configure(
             fraction = 0.05f,
-            detail = "Preparing the packaged PRoot runtime",
+            detail = "Preparing the Linux environment",
             terminalLine = "[configure] storage preflight passed",
         )
         val prootRuntime = ProotRuntimeInstaller.install(this)
@@ -479,7 +479,7 @@ class InstallerService : Service() {
                     RootfsInstallRequest(
                         archive = archive,
                         rootfsDirectory = rootfsDirectory,
-                        installationName = distro.internalName,
+                        installationName = work.installationName,
                         operationId = operationId,
                     ),
                 onExtractionProgress = progressPublisher::extract,
@@ -516,7 +516,7 @@ class InstallerService : Service() {
                 work = work,
                 stage = InstallStage.COMPLETE,
                 stageProgress = 1f,
-                currentDetail = "Installed at ${rootfs.name}",
+                currentDetail = "Linux system installed",
                 terminalLines =
                     previous?.terminalLines.orEmpty() +
                         if (reused) {
@@ -673,7 +673,7 @@ class InstallerService : Service() {
             .createNotificationChannel(
                 NotificationChannel(
                     NOTIFICATION_CHANNEL,
-                    "uDroid installation",
+                    "Linux installation",
                     NotificationManager.IMPORTANCE_LOW,
                 ).apply {
                     description = "Linux image download, verification, and installation"
@@ -701,7 +701,7 @@ class InstallerService : Service() {
             )
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL)
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle("uDroid Linux image")
+            .setContentTitle("Installing Linux")
             .setContentText(text)
             .setContentIntent(openIntent)
             .setOngoing(true)

@@ -35,6 +35,9 @@ import org.randomcoder.udroid.audio.AudioConfiguration
 import org.randomcoder.udroid.audio.AudioConfigurationStore
 import org.randomcoder.udroid.audio.AudioServerController
 import org.randomcoder.udroid.audio.AudioSessionSnapshot
+import org.randomcoder.udroid.gfxstream.GfxstreamHostController
+import org.randomcoder.udroid.gfxstream.GfxstreamHostSnapshot
+import org.randomcoder.udroid.gfxstream.GfxstreamProotLaunchProfile
 import org.randomcoder.udroid.install.ProotRuntimeInstaller
 import org.randomcoder.udroid.linuxapps.LinuxApplication
 import org.randomcoder.udroid.x11.X11ServerController
@@ -56,6 +59,7 @@ class RuntimeSupervisorService : Service() {
     private var nextTerminalNumber = 1
     private var terminalCreationInFlight = false
     private val ownedDesktop = AtomicReference<OwnedDesktopProcess?>(null)
+    private val ownedGfxstreamHost = AtomicReference<GfxstreamHostController?>(null)
     private val desktopLaunchToken = AtomicReference<String?>(null)
     private val pendingDesktopRestart = AtomicReference<DesktopLaunchRequest?>(null)
     private val attachedViews = CopyOnWriteArraySet<TerminalView>()
@@ -247,6 +251,7 @@ class RuntimeSupervisorService : Service() {
         pendingDesktopRestart.set(null)
         desktopLaunchToken.set(null)
         ownedDesktop.getAndSet(null)?.let { terminateDesktopProcess(it, OsConstants.SIGKILL) }
+        closeGfxstreamHost()
         stopApplicationProcesses()
         audioController.stop(app.runtimeState.current().bootId)
         applicationExecutor.shutdownNow()
@@ -276,7 +281,10 @@ class RuntimeSupervisorService : Service() {
             )
         }
 
-    fun createTerminalTab(onComplete: (Result<String>) -> Unit) {
+    fun createTerminalTab(
+        rootfsName: String,
+        onComplete: (Result<String>) -> Unit,
+    ) {
         check(Looper.myLooper() == Looper.getMainLooper()) {
             "Terminal tabs must be created from the main thread"
         }
@@ -285,8 +293,7 @@ class RuntimeSupervisorService : Service() {
             return
         }
         val snapshot = app.runtimeState.current()
-        val rootfsName = snapshot.rootfsName
-        if (snapshot.phase != RuntimePhase.RUNNING || rootfsName == null) {
+        if (snapshot.phase != RuntimePhase.RUNNING) {
             onComplete(Result.failure(IllegalStateException("Start Linux before opening another terminal")))
             return
         }
@@ -296,7 +303,12 @@ class RuntimeSupervisorService : Service() {
         applicationExecutor.execute {
             val prepared =
                 runCatching {
-                    val rootfs = InstalledRootfsResolver.resolve(this, rootfsName)
+                    val rootfs =
+                        app.rootfsRegistry
+                            .all()
+                            .firstOrNull { it.name == rootfsName }
+                            ?.directory
+                            ?: error("Linux system $rootfsName is not installed or is not ready")
                     ProotTerminalLaunchBuilder.create(
                         context = this,
                         runtime = ProotRuntimeInstaller.install(this),
@@ -309,10 +321,7 @@ class RuntimeSupervisorService : Service() {
                 val result =
                     prepared.mapCatching { launch ->
                         val current = app.runtimeState.current()
-                        check(
-                            current.phase == RuntimePhase.RUNNING &&
-                                current.rootfsName == rootfsName,
-                        ) {
+                        check(current.phase == RuntimePhase.RUNNING) {
                             "Linux stopped while the terminal was opening"
                         }
                         val tab = createTerminalSession(launch)
@@ -606,6 +615,7 @@ class RuntimeSupervisorService : Service() {
                                 mapOf(
                                     "desktop_id" to application.id,
                                     "executable" to application.executable,
+                                    "mounts" to launch.mounts.joinToString { it.argument },
                                 ),
                         )
                     }
@@ -701,6 +711,7 @@ class RuntimeSupervisorService : Service() {
                     "display" to DISPLAY_NUMBER,
                     "compositing" to request.configuration.compositingEnabled,
                     "touch_scale" to request.configuration.touchScaleEnabled,
+                    "graphics_profile" to request.configuration.graphicsProfile.storageValue,
                 ),
         )
         x11Controller.whenReady { socketDirectory ->
@@ -712,9 +723,34 @@ class RuntimeSupervisorService : Service() {
                 return@whenReady
             }
             applicationExecutor.execute {
+                var startingGfxstreamHost: GfxstreamHostController? = null
                 runCatching {
                     if (desktopLaunchToken.get() != launchToken) return@runCatching null
                     val rootfs = InstalledRootfsResolver.resolve(this, request.rootfsName)
+                    val launchProfile =
+                        when (request.configuration.graphicsProfile) {
+                            DesktopGraphicsProfile.STANDARD -> null
+                            DesktopGraphicsProfile.GFXSTREAM_EXPERIMENTAL -> {
+                                lateinit var host: GfxstreamHostController
+                                host =
+                                    GfxstreamHostController(this) { failure ->
+                                        handleGfxstreamHostExit(host, failure)
+                                    }
+                                check(ownedGfxstreamHost.compareAndSet(null, host)) {
+                                    host.close()
+                                    "Another gfxstream host is already active"
+                                }
+                                startingGfxstreamHost = host
+                                val session = host.start()
+                                check(desktopLaunchToken.get() == launchToken) {
+                                    "The desktop start was cancelled while gfxstream was starting"
+                                }
+                                GfxstreamProotLaunchProfile(
+                                    runtime = session.guestRuntime,
+                                    gpuSocket = session.gpuSocket,
+                                )
+                            }
+                        }
                     val launch =
                         ProotDesktopLaunchBuilder.create(
                             context = this,
@@ -724,6 +760,7 @@ class RuntimeSupervisorService : Service() {
                             environment = request.environment,
                             configuration = request.configuration,
                             audioEndpoint = audioController.endpoint(),
+                            launchProfile = launchProfile,
                         )
                     val pidFile =
                         File(cacheDir, "desktop-process-$launchToken.pid").apply {
@@ -744,8 +781,9 @@ class RuntimeSupervisorService : Service() {
                                 error("Desktop launcher did not publish its host PID")
                             }
                     if (desktopLaunchToken.get() != launchToken) {
-                        runCatching { Os.kill(hostPid, OsConstants.SIGKILL) }
+                        runCatching { Os.kill(-hostPid, OsConstants.SIGKILL) }
                         pidFile.delete()
+                        releaseGfxstreamHost(startingGfxstreamHost)
                         return@runCatching null
                     }
                     val owned =
@@ -755,6 +793,8 @@ class RuntimeSupervisorService : Service() {
                             pidFile = pidFile,
                             rootfsName = request.rootfsName,
                             environment = request.environment,
+                            gfxstreamHost = startingGfxstreamHost,
+                            mounts = launch.mounts,
                         )
                     check(ownedDesktop.compareAndSet(null, owned)) {
                         "Another desktop session won display :0"
@@ -765,6 +805,7 @@ class RuntimeSupervisorService : Service() {
                     if (!desktopLaunchToken.compareAndSet(launchToken, null)) {
                         ownedDesktop.compareAndSet(owned, null)
                         terminateDesktopProcess(owned, OsConstants.SIGKILL)
+                        releaseGfxstreamHost(owned.gfxstreamHost)
                         return@onSuccess
                     }
                     publishState(
@@ -795,10 +836,14 @@ class RuntimeSupervisorService : Service() {
                             mapOf(
                                 "rootfs" to owned.rootfsName,
                                 "display" to DISPLAY_NUMBER,
+                                "graphics_profile" to
+                                    request.configuration.graphicsProfile.storageValue,
+                                "mounts" to owned.mounts.joinToString { it.argument },
                             ),
                     )
                     monitorDesktop(owned)
                 }.onFailure { error ->
+                    releaseGfxstreamHost(startingGfxstreamHost)
                     if (desktopLaunchToken.compareAndSet(launchToken, null)) {
                         publishDesktopFailure(
                             request,
@@ -815,6 +860,7 @@ class RuntimeSupervisorService : Service() {
         val current = ownedDesktop.get()
         if (current == null || !current.process.isAlive) {
             ownedDesktop.compareAndSet(current, null)
+            closeGfxstreamHost()
             publishState(
                 app.runtimeState.update {
                     it.copy(
@@ -908,6 +954,7 @@ class RuntimeSupervisorService : Service() {
     ) {
         if (!ownedDesktop.compareAndSet(owned, null)) return
         owned.pidFile.delete()
+        releaseGfxstreamHost(owned.gfxstreamHost)
         val previous = app.runtimeState.current().desktop
         val expected =
             previous.phase == DesktopSessionPhase.STOPPING ||
@@ -949,6 +996,55 @@ class RuntimeSupervisorService : Service() {
         pendingDesktopRestart.getAndSet(null)?.let(::startDesktopInternal)
     }
 
+    private fun releaseGfxstreamHost(host: GfxstreamHostController?) {
+        if (host != null && ownedGfxstreamHost.compareAndSet(host, null)) {
+            host.close()
+        }
+    }
+
+    private fun closeGfxstreamHost() {
+        ownedGfxstreamHost.getAndSet(null)?.close()
+    }
+
+    private fun handleGfxstreamHostExit(
+        host: GfxstreamHostController,
+        failure: GfxstreamHostSnapshot,
+    ) {
+        app.journal.append(
+            component = "gfxstream",
+            severity = "error",
+            event = "host_process_lost",
+            message = failure.detail,
+            bootId = app.runtimeState.current().bootId,
+        )
+        mainHandler.post {
+            if (ownedGfxstreamHost.get() !== host) return@post
+            val desktop = ownedDesktop.get()
+            if (desktop?.gfxstreamHost === host && desktop.process.isAlive) {
+                terminateDesktopProcess(desktop, OsConstants.SIGTERM)
+                mainHandler.postDelayed(
+                    {
+                        if (ownedDesktop.get() === desktop && desktop.process.isAlive) {
+                            app.journal.append(
+                                component = "desktop",
+                                severity = "warning",
+                                event = "desktop_force_stop",
+                                message =
+                                    "${desktop.environment.name} did not exit after gfxstream host loss",
+                                bootId = app.runtimeState.current().bootId,
+                                fields = mapOf("rootfs" to desktop.rootfsName),
+                            )
+                            terminateDesktopProcess(desktop, OsConstants.SIGKILL)
+                        }
+                    },
+                    GRACEFUL_STOP_TIMEOUT_MS,
+                )
+            } else {
+                releaseGfxstreamHost(host)
+            }
+        }
+    }
+
     private fun publishDesktopFailure(
         request: DesktopLaunchRequest,
         message: String,
@@ -987,6 +1083,7 @@ class RuntimeSupervisorService : Service() {
         pidFile: File,
     ): List<String> =
         buildList {
+            add("/system/bin/setsid")
             add("/system/bin/sh")
             add("-c")
             add("printf '%s' \"\$\$\" > \"\$1\"; shift; exec \"\$@\"")
@@ -1012,7 +1109,7 @@ class RuntimeSupervisorService : Service() {
         signal: Int,
     ) {
         try {
-            Os.kill(owned.hostPid, signal)
+            Os.kill(-owned.hostPid, signal)
         } catch (error: ErrnoException) {
             if (error.errno != OsConstants.ESRCH) {
                 app.journal.append(
@@ -1112,58 +1209,58 @@ class RuntimeSupervisorService : Service() {
             )
         }.mapCatching { launch ->
             launch to createTerminalSession(launch)
+        }.onSuccess { (launch, tab) ->
+            attachActiveTerminalToViews()
+            val session = tab.value
+            val running =
+                app.runtimeState.update {
+                    it.copy(
+                        phase = RuntimePhase.RUNNING,
+                        desiredRunning = true,
+                        message = "${tab.title} is running · PID ${session.pid}",
+                        childPid = session.pid.toLong(),
+                        rootfsName = launch.rootfs.name,
+                    )
+                }
+            publishState(running)
+            updateNotification("Linux terminal is running")
+            app.journal.append(
+                component = "terminal",
+                severity = "info",
+                event = "session_started",
+                message = "Interactive PRoot terminal started",
+                bootId = bootId,
+                fields =
+                    mapOf(
+                        "pid" to session.pid,
+                        "rootfs" to launch.rootfs.name,
+                        "tab_id" to tab.id,
+                        "mounts" to launch.mounts.joinToString { it.argument },
+                        "terminal" to "termux-v0.118.3",
+                    ),
+            )
+        }.onFailure { error ->
+            val failed =
+                app.runtimeState.update {
+                    it.copy(
+                        phase = RuntimePhase.CRASHED,
+                        desiredRunning = false,
+                        message = error.message ?: error.javaClass.simpleName,
+                        childPid = null,
+                    )
+                }
+            publishState(failed)
+            app.journal.append(
+                component = "supervisor",
+                severity = "error",
+                event = "terminal_start_failed",
+                message = failed.message,
+                bootId = bootId,
+                fields = mapOf("exception" to error.javaClass.name),
+            )
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
         }
-            .onSuccess { (launch, tab) ->
-                attachActiveTerminalToViews()
-                val session = tab.value
-                val running =
-                    app.runtimeState.update {
-                        it.copy(
-                            phase = RuntimePhase.RUNNING,
-                            desiredRunning = true,
-                            message = "${tab.title} is running · PID ${session.pid}",
-                            childPid = session.pid.toLong(),
-                            rootfsName = launch.rootfs.name,
-                        )
-                    }
-                publishState(running)
-                updateNotification("Linux terminal is running")
-                app.journal.append(
-                    component = "terminal",
-                    severity = "info",
-                    event = "session_started",
-                    message = "Interactive PRoot terminal started",
-                    bootId = bootId,
-                    fields =
-                        mapOf(
-                            "pid" to session.pid,
-                            "rootfs" to launch.rootfs.name,
-                            "tab_id" to tab.id,
-                            "terminal" to "termux-v0.118.3",
-                        ),
-                )
-            }.onFailure { error ->
-                val failed =
-                    app.runtimeState.update {
-                        it.copy(
-                            phase = RuntimePhase.CRASHED,
-                            desiredRunning = false,
-                            message = error.message ?: error.javaClass.simpleName,
-                            childPid = null,
-                        )
-                    }
-                publishState(failed)
-                app.journal.append(
-                    component = "supervisor",
-                    severity = "error",
-                    event = "terminal_start_failed",
-                    message = failed.message,
-                    bootId = bootId,
-                    fields = mapOf("exception" to error.javaClass.name),
-                )
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
-            }
     }
 
     private fun createTerminalSession(launch: ProotTerminalLaunch): TerminalTab<TerminalSession> {
@@ -1178,10 +1275,16 @@ class RuntimeSupervisorService : Service() {
                 terminalClient,
             )
         session.mSessionName = launch.rootfs.name
+        val title =
+            if (terminalTabs.all().none { it.rootfsName == launch.rootfs.name }) {
+                terminalDistroTitle(launch.rootfs.name)
+            } else {
+                "Terminal ${nextTerminalNumber++}"
+            }
         val tab =
             TerminalTab(
                 id = session.mHandle,
-                title = "Terminal ${nextTerminalNumber++}",
+                title = title,
                 rootfsName = launch.rootfs.name,
                 value = session,
             )
@@ -1219,6 +1322,7 @@ class RuntimeSupervisorService : Service() {
                     desiredRunning = active != null || it.desiredRunning,
                     message = message,
                     childPid = active?.value?.pid?.takeIf { pid -> pid > 0 }?.toLong(),
+                    rootfsName = active?.rootfsName ?: it.rootfsName,
                 )
             }
         publishState(next)
@@ -1517,10 +1621,10 @@ class RuntimeSupervisorService : Service() {
             .createNotificationChannel(
                 NotificationChannel(
                     NOTIFICATION_CHANNEL,
-                    "uDroid runtime",
+                    "Linux sessions",
                     NotificationManager.IMPORTANCE_LOW,
                 ).apply {
-                    description = "Linux runtime and desktop lifecycle"
+                    description = "Terminal, desktop, and audio status"
                 },
             )
     }
@@ -1605,7 +1709,7 @@ class RuntimeSupervisorService : Service() {
 
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setContentTitle("uDroid Linux")
+            .setContentTitle("Linux session")
             .setContentText(text)
             .setContentIntent(openIntent)
             .setOngoing(true)
@@ -1687,5 +1791,7 @@ class RuntimeSupervisorService : Service() {
         val pidFile: File,
         val rootfsName: String,
         val environment: DesktopEnvironment,
+        val gfxstreamHost: GfxstreamHostController?,
+        val mounts: List<ResolvedProotMount>,
     )
 }

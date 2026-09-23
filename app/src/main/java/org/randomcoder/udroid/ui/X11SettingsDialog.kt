@@ -1,7 +1,6 @@
 package org.randomcoder.udroid.ui
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -11,15 +10,17 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material3.Divider
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -55,9 +56,9 @@ fun X11SettingsDialog(
                         .padding(horizontal = 16.dp, vertical = 32.dp)
                         .widthIn(max = 560.dp)
                         .heightIn(max = 760.dp),
-                shape = RoundedCornerShape(24.dp),
+                shape = MaterialTheme.shapes.extraLarge,
                 color = UdroidTerminalSurface,
-                tonalElevation = 8.dp,
+                shadowElevation = 6.dp,
             ) {
                 Column {
                     Row(
@@ -80,7 +81,7 @@ fun X11SettingsDialog(
                         }
                         IconButton(onClick = onDismiss) {
                             Icon(
-                                imageVector = Icons.Outlined.Close,
+                                imageVector = Icons.Rounded.Close,
                                 contentDescription = "Close desktop settings",
                             )
                         }
@@ -92,10 +93,10 @@ fun X11SettingsDialog(
                                 .verticalScroll(rememberScrollState())
                                 .padding(horizontal = 20.dp, vertical = 12.dp),
                     ) {
-                        SettingsSectionTitle("OUTPUT")
+                        SettingsSectionTitle("Output")
                         SettingsLabel(
                             title = "Resolution",
-                            subtitle = "Native follows the Android surface; scaled changes Linux UI size.",
+                            subtitle = "Native matches your screen. Scaled changes the size of Linux controls.",
                         )
                         ChoiceGroup(
                             selected = settings.resolutionMode,
@@ -158,7 +159,7 @@ fun X11SettingsDialog(
                         )
                         SettingsSwitch(
                             title = "Stretch to fill",
-                            subtitle = "Ignore aspect ratio and use the complete surface.",
+                            subtitle = "Fill the screen even if the picture changes shape",
                             checked = settings.stretchDisplay,
                             onCheckedChange = {
                                 onSettingsChanged(settings.copy(stretchDisplay = it))
@@ -166,12 +167,12 @@ fun X11SettingsDialog(
                         )
 
                         SettingsDivider()
-                        SettingsSectionTitle("POINTER")
+                        SettingsSectionTitle("Pointer")
                         SettingsLabel(
                             title = "Touch input",
                             subtitle =
-                                "Direct controls the pointer. Trackpad moves relatively. " +
-                                    "Native sends every contact to Linux.",
+                                "Direct follows your finger. Trackpad moves the pointer relative to your touch. " +
+                                    "Native sends all touch points to Linux.",
                         )
                         ChoiceGroup(
                             selected = settings.touchMode,
@@ -200,10 +201,10 @@ fun X11SettingsDialog(
                         }
 
                         SettingsDivider()
-                        SettingsSectionTitle("KEYBOARD")
+                        SettingsSectionTitle("Keyboard")
                         SettingsSwitch(
-                            title = "Prefer hardware scancodes",
-                            subtitle = "Let the Linux desktop handle the physical keyboard layout.",
+                            title = "Use hardware keyboard layout",
+                            subtitle = "Let Linux manage the physical keyboard layout",
                             checked = settings.preferScancodes,
                             onCheckedChange = {
                                 onSettingsChanged(settings.copy(preferScancodes = it))
@@ -211,10 +212,10 @@ fun X11SettingsDialog(
                         )
 
                         SettingsDivider()
-                        SettingsSectionTitle("SESSION")
+                        SettingsSectionTitle("Session")
                         SettingsSwitch(
                             title = "Keep screen on",
-                            subtitle = "Prevent display sleep while the desktop surface is open.",
+                            subtitle = "Prevent the screen from sleeping while the desktop is open",
                             checked = settings.keepScreenOn,
                             onCheckedChange = {
                                 onSettingsChanged(settings.copy(keepScreenOn = it))
@@ -222,7 +223,7 @@ fun X11SettingsDialog(
                         )
                         SettingsSwitch(
                             title = "Start with controls collapsed",
-                            subtitle = "Use the compact handle when opening Desktop.",
+                            subtitle = "Show only the compact handle when the desktop opens",
                             checked = settings.startControlsCollapsed,
                             onCheckedChange = {
                                 onSettingsChanged(
@@ -266,49 +267,21 @@ private fun SettingsLabel(
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun <T> ChoiceGroup(
     selected: T,
     options: List<Pair<T, String>>,
     onSelected: (T) -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        options.forEach { (value, label) ->
+    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+        options.forEachIndexed { index, (value, label) ->
             val isSelected = value == selected
-            Surface(
-                modifier =
-                    Modifier
-                        .weight(1f)
-                        .clickable { onSelected(value) },
-                shape = RoundedCornerShape(12.dp),
-                color =
-                    if (isSelected) {
-                        MaterialTheme.colorScheme.primaryContainer
-                    } else {
-                        UdroidTerminalRaised
-                    },
-                contentColor =
-                    if (isSelected) {
-                        MaterialTheme.colorScheme.onPrimaryContainer
-                    } else {
-                        UdroidTerminalText
-                    },
+            SegmentedButton(
+                selected = isSelected,
+                onClick = { onSelected(value) },
+                shape = SegmentedButtonDefaults.itemShape(index, options.size),
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RadioButton(
-                        selected = isSelected,
-                        onClick = null,
-                    )
-                    Text(
-                        text = label,
-                        style = MaterialTheme.typography.labelLarge,
-                    )
-                }
+                Text(text = label)
             }
         }
     }
@@ -386,7 +359,7 @@ private fun SettingsSwitch(
 
 @Composable
 private fun SettingsDivider() {
-    Divider(
+    HorizontalDivider(
         modifier = Modifier.padding(vertical = 18.dp),
         color = UdroidTerminalLine,
     )

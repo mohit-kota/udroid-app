@@ -17,56 +17,56 @@ enum class InstallStage(
         weight = 0.00f,
     ),
     CHECKING(
-        normalTitle = "Checking your device",
-        normalSubtitle = "Making sure this Linux image fits and can run here",
+        normalTitle = "Checking device support",
+        normalSubtitle = "Confirming this image works on your device",
         startFraction = 0.00f,
         weight = 0.05f,
     ),
     DOWNLOADING(
-        normalTitle = "Bringing Linux onto your phone",
-        normalSubtitle = "Downloading the selected system image",
+        normalTitle = "Downloading Linux",
+        normalSubtitle = "Downloading the selected image",
         startFraction = 0.05f,
         weight = 0.40f,
     ),
     VERIFYING(
         normalTitle = "Checking the download",
-        normalSubtitle = "Making sure every byte arrived unchanged",
+        normalSubtitle = "Confirming the download arrived unchanged",
         startFraction = 0.45f,
         weight = 0.10f,
     ),
     ARCHIVE_READY(
-        normalTitle = "Linux image downloaded",
-        normalSubtitle = "The archive passed its integrity check",
+        normalTitle = "Download verified",
+        normalSubtitle = "The image is ready to install",
         startFraction = 0.55f,
         weight = 0.00f,
     ),
     EXTRACTING(
-        normalTitle = "Building your Linux system",
-        normalSubtitle = "Unpacking files into an isolated uDroid environment",
+        normalTitle = "Installing Linux",
+        normalSubtitle = "Unpacking files into your Linux system",
         startFraction = 0.55f,
         weight = 0.30f,
     ),
     CONFIGURING(
-        normalTitle = "Finishing the setup",
-        normalSubtitle = "Preparing users, networking, and the first boot",
+        normalTitle = "Setting up Linux",
+        normalSubtitle = "Preparing users, network access, and first launch",
         startFraction = 0.85f,
         weight = 0.15f,
     ),
     COMPLETE(
-        normalTitle = "Your Linux system is ready",
-        normalSubtitle = "Installation and first checks passed",
+        normalTitle = "Linux is ready",
+        normalSubtitle = "Setup and system checks completed",
         startFraction = 1.00f,
         weight = 0.00f,
     ),
     FAILED(
-        normalTitle = "Installation needs attention",
-        normalSubtitle = "Open the terminal details to see what stopped",
+        normalTitle = "Installation stopped",
+        normalSubtitle = "Open the install log to see what happened",
         startFraction = 0.00f,
         weight = 0.00f,
     ),
     PAUSED(
         normalTitle = "Installation paused",
-        normalSubtitle = "Verified or partial data is saved and can resume safely",
+        normalSubtitle = "Your download is saved and ready to resume",
         startFraction = 0.00f,
         weight = 0.00f,
     ),
@@ -104,8 +104,7 @@ data class InstallProgress(
             InstallStage.READY -> 0f
             InstallStage.ARCHIVE_READY -> 0.55f
             InstallStage.COMPLETE -> 1f
-            InstallStage.FAILED -> 0f
-            InstallStage.PAUSED -> stageProgress.coerceIn(0f, 1f)
+            InstallStage.FAILED, InstallStage.PAUSED -> stageProgress.coerceIn(0f, 1f)
             else ->
                 (stage.startFraction + (stage.weight * stageProgress.coerceIn(0f, 1f)))
                     .coerceIn(0f, 1f)
@@ -116,21 +115,35 @@ data class InstallProgress(
 
 object InstallationSelection {
     fun initial(distro: DistroVariant): InstallProgress =
+        initial(
+            InstallerWorkRequest.Archive(
+                distro = distro,
+                operationId = UUID.randomUUID().toString(),
+            ),
+        )
+
+    fun initial(work: InstallerWorkRequest): InstallProgress =
         InstallProgress(
-            work =
-                InstallerWorkRequest.Archive(
-                    distro = distro,
-                    operationId = UUID.randomUUID().toString(),
-                ),
+            work = work,
             stage = InstallStage.READY,
             stageProgress = 0f,
-            currentDetail = "SHA-256 metadata is available for ${distro.architecture}",
+            currentDetail = "Configure this distro, then start its image download",
             terminalLines =
-                listOf(
-                    "\$ udroid pull --plan ${distro.id}",
-                    "[ready] ${distro.downloadUrl.substringAfterLast('/')}",
-                    "[ready] sha256 ${distro.sha256.take(16)}…",
-                ),
+                when (work) {
+                    is InstallerWorkRequest.Archive ->
+                        listOf(
+                            "\$ udroid pull --plan ${work.distro.id}",
+                            "[ready] ${work.distro.downloadUrl.substringAfterLast('/')}",
+                            "[ready] install as ${work.installationName}",
+                            "[ready] sha256 ${work.distro.sha256.take(16)}…",
+                        )
+                    is InstallerWorkRequest.Oci ->
+                        listOf(
+                            "\$ udroid pull --plan ${work.reference}",
+                            "[ready] install as ${work.installationName}",
+                            "[ready] platform ${work.platform.os}/${work.platform.architecture}",
+                        )
+                },
             previewOnly = false,
         )
 }

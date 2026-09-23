@@ -15,12 +15,22 @@ object ProotDesktopLaunchBuilder {
         environment: DesktopEnvironment,
         configuration: DesktopConfiguration,
         audioEndpoint: AudioEndpoint? = null,
+        launchProfile: ProotLaunchProfile? = null,
     ): ProotApplicationLaunch {
         require(File(rootfs, RootfsInstallationPipeline.READY_MARKER).isFile) {
             "The selected Linux image is not ready"
         }
         require(x11SocketDirectory.isDirectory) { "The X11 socket directory is unavailable" }
         val guestHome = if (File(rootfs, "root").isDirectory) "/root" else "/"
+        val mounts =
+            ProotMountResolver.resolve(
+                profile = ProotMountProfileStore(context).load(rootfs.name),
+                sessionMounts =
+                    ProotMountResolver.sessionMounts(
+                        x11SocketDirectory = x11SocketDirectory.absolutePath,
+                        audioAuthDirectory = audioEndpoint?.hostAuthDirectory?.absolutePath,
+                    ),
+            )
         val arguments =
             buildArguments(
                 prootPath = runtime.executable.absolutePath,
@@ -30,6 +40,8 @@ object ProotDesktopLaunchBuilder {
                 environment = environment,
                 configuration = configuration,
                 audioAuthDirectory = audioEndpoint?.hostAuthDirectory?.absolutePath,
+                launchProfile = launchProfile,
+                mounts = mounts,
                 hasDbusRunSession =
                     File(rootfs, "usr/bin/dbus-run-session").isFile ||
                         File(rootfs, "bin/dbus-run-session").isFile,
@@ -57,6 +69,7 @@ object ProotDesktopLaunchBuilder {
                         val separator = it.indexOf('=')
                         it.substring(0, separator) to it.substring(separator + 1)
                     },
+            mounts = mounts,
         )
     }
 
@@ -69,6 +82,9 @@ object ProotDesktopLaunchBuilder {
         configuration: DesktopConfiguration,
         hasDbusRunSession: Boolean,
         audioAuthDirectory: String? = null,
+        launchProfile: ProotLaunchProfile? = null,
+        mounts: List<ResolvedProotMount> =
+            ProotMountResolver.defaults(x11SocketDirectory, audioAuthDirectory),
     ): List<String> =
         buildList {
             add(prootPath)
@@ -76,13 +92,8 @@ object ProotDesktopLaunchBuilder {
             add("--kill-on-exit")
             add("--root-id")
             add("--rootfs=$rootfsPath")
-            addAndroidProotBindMounts()
-            add("-b")
-            add("$x11SocketDirectory:/tmp/.X11-unix")
-            if (audioAuthDirectory != null) {
-                add("-b")
-                add("$audioAuthDirectory:${AudioEndpoint.GUEST_AUTH_DIRECTORY}")
-            }
+            addProotBindMounts(mounts)
+            launchProfile?.addBindings(this)
             add("--cwd=$guestHome")
             add("/usr/bin/env")
             add("-i")
@@ -107,15 +118,19 @@ object ProotDesktopLaunchBuilder {
                 add("QT_SCALE_FACTOR=2")
                 add("XCURSOR_SIZE=48")
             }
-            if (hasDbusRunSession) {
-                add("/usr/bin/dbus-run-session")
-                add("--")
-            }
-            add("/bin/sh")
-            add("-lc")
-            add(compositorScript(environment.kind, configuration.compositingEnabled))
-            add("udroid-desktop")
-            addAll(environment.command)
+            val desktopCommand =
+                buildList {
+                    if (hasDbusRunSession) {
+                        add("/usr/bin/dbus-run-session")
+                        add("--")
+                    }
+                    add("/bin/sh")
+                    add("-lc")
+                    add(compositorScript(environment.kind, configuration.compositingEnabled))
+                    add("udroid-desktop")
+                    addAll(environment.command)
+                }
+            addAll(launchProfile?.wrapGuestCommand(desktopCommand) ?: desktopCommand)
         }
 
     internal fun compositorScript(

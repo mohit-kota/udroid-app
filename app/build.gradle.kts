@@ -1,3 +1,6 @@
+import java.security.MessageDigest
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -28,6 +31,7 @@ kotlin {
 android {
     namespace = "org.randomcoder.udroid"
     compileSdk = 36
+    ndkVersion = "28.2.13676358"
     testBuildType = "probe"
 
     defaultConfig {
@@ -38,8 +42,8 @@ android {
         // following the execution bridge merged into official termux-exec.
         targetSdk = 36
 
-        versionCode = 10
-        versionName = "0.1.0"
+        versionCode = 13
+        versionName = "0.1.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -51,6 +55,12 @@ android {
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        }
+
+        externalNativeBuild {
+            cmake {
+                cppFlags += listOf("-std=c++17", "-Wall", "-Wextra", "-Werror")
+            }
         }
     }
 
@@ -80,6 +90,14 @@ android {
                 "proguard-rules.pro",
             )
         }
+        create("dev") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "+dev"
+            isDebuggable = true
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += "release"
+        }
         create("probe") {
             initWith(getByName("debug"))
             applicationIdSuffix = ".ociprobe"
@@ -105,6 +123,12 @@ android {
         }
     }
 
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+        }
+    }
+
 }
 
 dependencies {
@@ -113,7 +137,7 @@ dependencies {
     implementation("androidx.compose.animation:animation:1.7.8")
     implementation("androidx.compose.ui:ui:1.7.8")
     implementation("androidx.compose.ui:ui-tooling-preview:1.7.8")
-    implementation("androidx.compose.material3:material3:1.0.1")
+    implementation("androidx.compose.material3:material3:1.4.0")
     implementation("androidx.compose.material:material-icons-extended:1.7.8")
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
@@ -136,4 +160,83 @@ dependencies {
     androidTestImplementation("androidx.test:core-ktx:1.6.1")
     androidTestImplementation("androidx.test.ext:junit-ktx:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
+}
+
+val verifyGfxstreamRuntimeAssets by
+    tasks.registering {
+        val runtimeRoot = file("src/main/assets/runtime/arm64-v8a")
+        inputs.dir(runtimeRoot.resolve("gfxstream-host"))
+        inputs.dir(runtimeRoot.resolve("gfxstream-guest"))
+
+        doLast {
+            fun ByteArray.containsSequence(needle: ByteArray): Boolean {
+                if (needle.isEmpty() || needle.size > size) return false
+                for (start in 0..size - needle.size) {
+                    var matched = true
+                    for (offset in needle.indices) {
+                        if (this[start + offset] != needle[offset]) {
+                            matched = false
+                            break
+                        }
+                    }
+                    if (matched) return true
+                }
+                return false
+            }
+
+            val bundleNames = listOf("gfxstream-host", "gfxstream-guest")
+            val manifests =
+                bundleNames.associateWith { bundleName ->
+                    val bundle = runtimeRoot.resolve(bundleName)
+                    Properties().apply {
+                        bundle.resolve("MANIFEST.properties").inputStream().use(::load)
+                    }
+                }
+            val hostProtocolGeneration = manifests.getValue("gfxstream-host").getProperty("protocol_generation")
+            val guestProtocolGeneration = manifests.getValue("gfxstream-guest").getProperty("protocol_generation")
+            check(hostProtocolGeneration == "2") {
+                "gfxstream host protocol_generation must be 2"
+            }
+            check(guestProtocolGeneration == hostProtocolGeneration) {
+                "gfxstream host/guest protocol_generation mismatch"
+            }
+
+            bundleNames.forEach { bundleName ->
+                val bundle = runtimeRoot.resolve(bundleName)
+                val manifest = manifests.getValue(bundleName)
+                manifest.stringPropertyNames()
+                    .filter { it.endsWith(".sha256") }
+                    .forEach { digestProperty ->
+                        val entry = digestProperty.removeSuffix(".sha256")
+                        val artifact = bundle.resolve(entry)
+                        check(artifact.isFile) { "$bundleName is missing $entry" }
+                        val digest = MessageDigest.getInstance("SHA-256")
+                        artifact.inputStream().buffered().use { input ->
+                            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                            while (true) {
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                digest.update(buffer, 0, count)
+                            }
+                        }
+                        val actual = digest.digest().joinToString("") { "%02x".format(it) }
+                        check(actual == manifest.getProperty(digestProperty)) {
+                            "$bundleName digest mismatch for $entry"
+                        }
+                    }
+
+                if (bundleName == "gfxstream-guest") {
+                    val expectedRevision = manifest.getProperty("mesa_commit").take(10)
+                    val embeddedRevision = "git-$expectedRevision".encodeToByteArray()
+                    val bytes = bundle.resolve("lib/libvulkan_gfxstream.so").readBytes()
+                    check(bytes.containsSequence(embeddedRevision)) {
+                        "gfxstream guest binary does not identify Mesa $expectedRevision"
+                    }
+                }
+            }
+        }
+    }
+
+tasks.matching { it.name == "preBuild" }.configureEach {
+    dependsOn(verifyGfxstreamRuntimeAssets)
 }

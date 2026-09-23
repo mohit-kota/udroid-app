@@ -40,6 +40,28 @@ class DesktopEnvironmentScannerTest {
     }
 
     @Test
+    fun `discovers display manager XSession entries`() {
+        val rootfs = Files.createTempDirectory("udroid-plasma").toFile()
+        val sessions = rootfs.resolve("usr/share/xsessions").apply { mkdirs() }
+        sessions.resolve("plasmax11.desktop").writeText(
+            """
+            [Desktop Entry]
+            Type=XSession
+            Exec=/usr/bin/startplasma-x11
+            DesktopNames=KDE
+            Name=Plasma (X11)
+            """.trimIndent(),
+        )
+
+        val result = DesktopEnvironmentScanner().scan(rootfs)
+
+        assertEquals(1, result.size)
+        assertEquals("plasmax11", result.single().id)
+        assertEquals(listOf("/usr/bin/startplasma-x11"), result.single().command)
+        assertEquals(DesktopEnvironmentKind.PLASMA, result.single().kind)
+    }
+
+    @Test
     fun `ignores malformed session commands`() {
         val rootfs = Files.createTempDirectory("udroid-desktops").toFile()
         val sessions = rootfs.resolve("usr/share/xsessions").apply { mkdirs() }
@@ -69,7 +91,7 @@ class DesktopEnvironmentScannerTest {
             ProotDesktopLaunchBuilder.buildArguments(
                 prootPath = "/data/proot",
                 rootfsPath = "/data/rootfs",
-                x11SocketDirectory = "/data/x11",
+                x11SocketDirectory = "/data/x11/.X11-unix",
                 guestHome = "/root",
                 environment = desktop,
                 configuration =
@@ -93,5 +115,77 @@ class DesktopEnvironmentScannerTest {
         assertTrue(script.contains("wait \"\$desktop_pid\""))
         assertEquals(desktop.command, arguments.takeLast(desktop.command.size))
         assertFalse(script.contains(desktop.command.last()))
+    }
+
+    @Test
+    fun `desktop launch applies an optional graphics profile to the session command`() {
+        val desktop =
+            DesktopEnvironment(
+                id = "xfce",
+                name = "Xfce",
+                command = listOf("startxfce4"),
+                desktopFilePath = "/usr/share/xsessions/xfce.desktop",
+                kind = DesktopEnvironmentKind.XFCE,
+            )
+        val profile =
+            object : ProotLaunchProfile {
+                override fun addBindings(arguments: MutableList<String>) {
+                    arguments += listOf("-b", "/data/gfxstream:/opt/udroid/gfxstream")
+                }
+
+                override fun wrapGuestCommand(command: List<String>): List<String> =
+                    listOf("/opt/udroid/gfxstream/bin/udroid-gfxstream-run") + command
+            }
+
+        val arguments =
+            ProotDesktopLaunchBuilder.buildArguments(
+                prootPath = "/data/proot",
+                rootfsPath = "/data/rootfs",
+                x11SocketDirectory = "/data/x11/.X11-unix",
+                guestHome = "/root",
+                environment = desktop,
+                configuration =
+                    DesktopConfiguration(
+                        environmentId = desktop.id,
+                        compositingEnabled = false,
+                        touchScaleEnabled = false,
+                        graphicsProfile = DesktopGraphicsProfile.GFXSTREAM_EXPERIMENTAL,
+                    ),
+                hasDbusRunSession = true,
+                launchProfile = profile,
+            )
+
+        assertTrue(arguments.contains("/data/gfxstream:/opt/udroid/gfxstream"))
+        assertEquals(
+            listOf(
+                "/opt/udroid/gfxstream/bin/udroid-gfxstream-run",
+                "/usr/bin/dbus-run-session",
+                "--",
+                "/bin/sh",
+            ),
+            arguments.subList(
+                arguments.indexOf("/opt/udroid/gfxstream/bin/udroid-gfxstream-run"),
+                arguments.indexOf("/opt/udroid/gfxstream/bin/udroid-gfxstream-run") + 4,
+            ),
+        )
+        assertEquals("startxfce4", arguments.last())
+    }
+
+    @Test
+    fun `unknown stored graphics profile safely falls back to standard`() {
+        assertEquals(
+            DesktopGraphicsProfile.STANDARD,
+            DesktopGraphicsProfile.fromStorage("future-driver"),
+        )
+    }
+
+    @Test
+    fun `inactive gfxstream profile safely falls back to standard`() {
+        assertEquals(
+            DesktopGraphicsProfile.STANDARD,
+            DesktopGraphicsProfile.fromStorage(
+                DesktopGraphicsProfile.GFXSTREAM_EXPERIMENTAL.storageValue,
+            ),
+        )
     }
 }

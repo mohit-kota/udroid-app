@@ -31,10 +31,29 @@ data class DesktopEnvironment(
     val kind: DesktopEnvironmentKind,
 )
 
+internal const val GFXSTREAM_PROFILE_ENABLED = false
+
+enum class DesktopGraphicsProfile(
+    val storageValue: String,
+) {
+    STANDARD("standard"),
+    GFXSTREAM_EXPERIMENTAL("gfxstream-experimental"),
+    ;
+
+    companion object {
+        fun fromStorage(value: String?): DesktopGraphicsProfile =
+            entries.firstOrNull {
+                it.storageValue == value &&
+                    (it != GFXSTREAM_EXPERIMENTAL || GFXSTREAM_PROFILE_ENABLED)
+            } ?: STANDARD
+    }
+}
+
 data class DesktopConfiguration(
     val environmentId: String?,
     val compositingEnabled: Boolean,
     val touchScaleEnabled: Boolean,
+    val graphicsProfile: DesktopGraphicsProfile = DesktopGraphicsProfile.STANDARD,
 )
 
 enum class DesktopSessionPhase {
@@ -89,6 +108,10 @@ class DesktopConfigurationStore(context: Context) {
                 },
             touchScaleEnabled =
                 preferences.getBoolean(key(rootfsName, KEY_TOUCH_SCALE), true),
+            graphicsProfile =
+                DesktopGraphicsProfile.fromStorage(
+                    preferences.getString(key(rootfsName, KEY_GRAPHICS_PROFILE), null),
+                ),
         )
     }
 
@@ -111,6 +134,9 @@ class DesktopConfigurationStore(context: Context) {
                 ).putBoolean(
                     key(rootfsName, KEY_TOUCH_SCALE),
                     configuration.touchScaleEnabled,
+                ).putString(
+                    key(rootfsName, KEY_GRAPHICS_PROFILE),
+                    configuration.graphicsProfile.storageValue,
                 ).commit(),
         ) {
             "Could not save desktop settings for $rootfsName"
@@ -145,6 +171,7 @@ class DesktopConfigurationStore(context: Context) {
         const val KEY_ENVIRONMENT = "environment"
         const val KEY_COMPOSITING = "compositing"
         const val KEY_TOUCH_SCALE = "touch-scale"
+        const val KEY_GRAPHICS_PROFILE = "graphics-profile"
     }
 }
 
@@ -174,7 +201,7 @@ class DesktopEnvironmentScanner {
         guestPath: String,
     ): DesktopEnvironment? {
         val values = parseDesktopEntry(file)
-        if (values["Type"]?.trim() != "Application") return null
+        if (values["Type"]?.trim() !in SESSION_ENTRY_TYPES) return null
         if (values.boolean("Hidden") || values.boolean("NoDisplay")) return null
         val name = values["Name"]?.unescape()?.trim()?.takeIf(String::isNotBlank) ?: return null
         val rawExec = values["Exec"]?.trim()?.takeIf(String::isNotBlank) ?: return null
@@ -266,5 +293,6 @@ class DesktopEnvironmentScanner {
                 "/usr/share/xsessions",
                 "/usr/local/share/xsessions",
             )
+        val SESSION_ENTRY_TYPES = setOf("Application", "XSession")
     }
 }

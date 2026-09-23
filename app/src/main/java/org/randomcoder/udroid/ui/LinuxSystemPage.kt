@@ -1,5 +1,6 @@
 package org.randomcoder.udroid.ui
 
+import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -16,23 +17,26 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.Apps
-import androidx.compose.material.icons.outlined.DeleteOutline
-import androidx.compose.material.icons.outlined.DesktopWindows
-import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.RestartAlt
-import androidx.compose.material.icons.outlined.Stop
-import androidx.compose.material.icons.outlined.Terminal
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Apps
+import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.DesktopWindows
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.RestartAlt
+import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
@@ -59,8 +63,13 @@ import org.randomcoder.udroid.catalog.LinuxDistribution
 import org.randomcoder.udroid.runtime.DesktopCompositorSupport
 import org.randomcoder.udroid.runtime.DesktopConfiguration
 import org.randomcoder.udroid.runtime.DesktopEnvironment
+import org.randomcoder.udroid.runtime.DesktopGraphicsProfile
 import org.randomcoder.udroid.runtime.DesktopSessionPhase
+import org.randomcoder.udroid.runtime.GFXSTREAM_PROFILE_ENABLED
 import org.randomcoder.udroid.runtime.InstalledRootfs
+import org.randomcoder.udroid.runtime.PROOT_DEFAULT_MOUNTS
+import org.randomcoder.udroid.runtime.ProotMountProfile
+import org.randomcoder.udroid.runtime.ProotMountProfileStore
 import org.randomcoder.udroid.runtime.RuntimePhase
 import org.randomcoder.udroid.runtime.RuntimeSnapshot
 import java.text.DateFormat
@@ -88,18 +97,26 @@ fun LinuxSystemPage(
     onSelectEnvironment: (String) -> Unit,
     onCompositingChanged: (Boolean) -> Unit,
     onTouchScaleChanged: (Boolean) -> Unit,
+    onGraphicsProfileChanged: (DesktopGraphicsProfile) -> Unit,
     onAudioOutputChanged: (Boolean) -> Unit,
     onMicrophoneChanged: (Boolean) -> Unit,
     onStartDesktop: () -> Unit,
     onStopTerminal: () -> Unit,
     onStopDesktop: () -> Unit,
     onRestartDesktop: () -> Unit,
+    onConfigureMounts: () -> Unit,
     onResetFilesystem: () -> Unit,
     onDeleteFilesystem: () -> Unit,
 ) {
     BackHandler(onBack = onBack)
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val mountProfileStore = remember(context) { ProotMountProfileStore(context) }
     var confirmation by remember(rootfs.name) {
         mutableStateOf<FilesystemConfirmation?>(null)
+    }
+    val mountProfile = remember(rootfs.name) {
+        runCatching { mountProfileStore.load(rootfs.name) }
+            .getOrDefault(ProotMountProfile())
     }
     val selectedEnvironment =
         environments.firstOrNull { it.id == configuration.environmentId }
@@ -123,6 +140,8 @@ fun LinuxSystemPage(
                 RuntimePhase.RUNNING,
                 RuntimePhase.STOPPING,
             )
+    val runtimeStopping =
+        snapshot.rootfsName == rootfs.name && snapshot.phase == RuntimePhase.STOPPING
     val desktopBlocksMaintenance =
         desktop.rootfsName == rootfs.name &&
             desktop.phase in
@@ -150,7 +169,7 @@ fun LinuxSystemPage(
             ) {
                 IconButton(onClick = onBack) {
                     Icon(
-                        imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                        imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                         contentDescription = "Back to Linux systems",
                     )
                 }
@@ -171,9 +190,9 @@ fun LinuxSystemPage(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        rootfs.name,
+                        distro?.let { "${it.experienceName} · ${it.architecture}" }
+                            ?: rootfs.name,
                         color = UdroidMuted,
-                        fontFamily = FontFamily.Monospace,
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
@@ -203,19 +222,19 @@ fun LinuxSystemPage(
             ) {
                 SystemAction(
                     modifier = Modifier.weight(1f),
-                    icon = Icons.Outlined.Terminal,
+                    icon = Icons.Rounded.Terminal,
                     label = "Terminal",
                     onClick = onOpenTerminal,
                 )
                 SystemAction(
                     modifier = Modifier.weight(1f),
-                    icon = Icons.Outlined.Apps,
+                    icon = Icons.Rounded.Apps,
                     label = "Apps",
                     onClick = onOpenApps,
                 )
                 SystemAction(
                     modifier = Modifier.weight(1f),
-                    icon = Icons.Outlined.DesktopWindows,
+                    icon = Icons.Rounded.DesktopWindows,
                     label = "Display",
                     enabled = desktopRunning,
                     onClick = onOpenDisplay,
@@ -258,7 +277,7 @@ fun LinuxSystemPage(
                     ) {
                         CircularProgressIndicator(modifier = Modifier.size(20.dp))
                         Text(
-                            "Detecting installed X11 desktops…",
+                            "Looking for installed desktops…",
                             modifier = Modifier.padding(start = 12.dp),
                             color = UdroidMuted,
                         )
@@ -269,17 +288,16 @@ fun LinuxSystemPage(
                 item(key = "desktop-empty") {
                     Surface(
                         color = UdroidRaised,
-                        border = BorderStroke(1.dp, UdroidLine),
-                        shape = RoundedCornerShape(12.dp),
+                        shape = MaterialTheme.shapes.medium,
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Text(
-                                "No desktop environment detected",
+                                "No desktop found",
                                 style = MaterialTheme.typography.titleMedium,
                             )
                             Text(
                                 scanMessage
-                                    ?: "Install an X11 session such as XFCE, Plasma, or MATE.",
+                                    ?: "Install XFCE, Plasma, or MATE, then scan again",
                                 color = UdroidMuted,
                                 style = MaterialTheme.typography.bodySmall,
                             )
@@ -310,6 +328,7 @@ fun LinuxSystemPage(
                     desktopRunning = desktopRunning,
                     onCompositingChanged = onCompositingChanged,
                     onTouchScaleChanged = onTouchScaleChanged,
+                    onGraphicsProfileChanged = onGraphicsProfileChanged,
                 )
             }
             item(key = "desktop-controls") {
@@ -324,7 +343,7 @@ fun LinuxSystemPage(
                                 onClick = onStopDesktop,
                                 enabled = !desktopBusy,
                             ) {
-                                Icon(Icons.Outlined.Stop, contentDescription = null)
+                                Icon(Icons.Rounded.Stop, contentDescription = null)
                                 Text("Stop", modifier = Modifier.padding(start = 6.dp))
                             }
                             Button(
@@ -332,7 +351,7 @@ fun LinuxSystemPage(
                                 onClick = onRestartDesktop,
                                 enabled = !desktopBusy,
                             ) {
-                                Icon(Icons.Outlined.Refresh, contentDescription = null)
+                                Icon(Icons.Rounded.Refresh, contentDescription = null)
                                 Text("Restart", modifier = Modifier.padding(start = 6.dp))
                             }
                         }
@@ -342,7 +361,7 @@ fun LinuxSystemPage(
                                 onClick = onStartDesktop,
                                 enabled = !desktopBusy,
                             ) {
-                                Icon(Icons.Outlined.DesktopWindows, contentDescription = null)
+                                Icon(Icons.Rounded.DesktopWindows, contentDescription = null)
                                 Text(
                                     when (desktop.phase) {
                                         DesktopSessionPhase.STARTING -> "Starting desktop…"
@@ -368,11 +387,11 @@ fun LinuxSystemPage(
             Surface(
                 color = Color.Transparent,
                 border = BorderStroke(1.dp, UdroidLine),
-                shape = RoundedCornerShape(12.dp),
+                shape = MaterialTheme.shapes.medium,
             ) {
                 Column {
-                    FactRow("Rootfs", rootfs.directory.name)
-                    Divider(color = UdroidLine)
+                    FactRow("Storage", rootfs.directory.name)
+                    HorizontalDivider(color = UdroidLine)
                     FactRow(
                         "Installed",
                         DateFormat.getDateTimeInstance(
@@ -381,16 +400,35 @@ fun LinuxSystemPage(
                         ).format(Date(rootfs.readyAtEpochMs)),
                     )
                     distro?.let {
-                        Divider(color = UdroidLine)
+                        HorizontalDivider(color = UdroidLine)
                         FactRow("Architecture", it.architecture)
                     }
                 }
             }
         }
 
+        item(key = "mounts-label") {
+            UdroidSectionLabel(
+                text = "File access",
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+        item(key = "mounts-settings") {
+            MountProfilePanel(
+                profile = mountProfile,
+                enabled = maintenanceEnabled,
+                crashed =
+                    snapshot.rootfsName == rootfs.name &&
+                        snapshot.phase == RuntimePhase.CRASHED,
+                message = null,
+                onConfigure = onConfigureMounts,
+                onRetry = onOpenTerminal,
+            )
+        }
+
         item(key = "filesystem-label") {
             UdroidSectionLabel(
-                text = "Filesystem",
+                text = "Storage",
                 modifier = Modifier.padding(top = 4.dp),
             )
         }
@@ -398,24 +436,24 @@ fun LinuxSystemPage(
             Surface(
                 color = Color.Transparent,
                 border = BorderStroke(1.dp, UdroidLine),
-                shape = RoundedCornerShape(12.dp),
+                shape = MaterialTheme.shapes.medium,
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
                     Text(
-                        "Manage the installed Linux files",
+                        "Manage this Linux system",
                         style = MaterialTheme.typography.titleSmall,
                     )
                     Text(
                         when {
                             maintenanceInProgress ->
-                                maintenanceMessage ?: "Changing the filesystem…"
+                                maintenanceMessage ?: "Changing the Linux system…"
                             runtimeBlocksMaintenance || desktopBlocksMaintenance ->
-                                "Stop the terminal and desktop before changing this filesystem."
+                                "Stop the terminal and desktop before resetting or deleting this system"
                             !resetAvailable ->
-                                "The original source is unavailable for this legacy install. " +
-                                    "You can still delete it."
+                                "Reset isn’t available because the original image source is missing. " +
+                                    "You can still delete this system."
                             else ->
-                                "Reset reinstalls the original image. Delete removes this system."
+                                "Reset installs a fresh copy. Delete removes this Linux system."
                         },
                         modifier = Modifier.padding(top = 4.dp),
                         color = UdroidMuted,
@@ -440,11 +478,19 @@ fun LinuxSystemPage(
                             if (runtimeBlocksMaintenance) {
                                 OutlinedButton(
                                     modifier = Modifier.weight(1f),
+                                    enabled = !runtimeStopping,
                                     onClick = onStopTerminal,
                                 ) {
-                                    Icon(Icons.Outlined.Stop, contentDescription = null)
+                                    if (runtimeStopping) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(18.dp),
+                                            strokeWidth = 2.dp,
+                                        )
+                                    } else {
+                                        Icon(Icons.Rounded.Stop, contentDescription = null)
+                                    }
                                     Text(
-                                        "Stop terminal",
+                                        if (runtimeStopping) "Stopping…" else "Stop terminal",
                                         modifier = Modifier.padding(start = 6.dp),
                                     )
                                 }
@@ -454,7 +500,7 @@ fun LinuxSystemPage(
                                     modifier = Modifier.weight(1f),
                                     onClick = onStopDesktop,
                                 ) {
-                                    Icon(Icons.Outlined.Stop, contentDescription = null)
+                                    Icon(Icons.Rounded.Stop, contentDescription = null)
                                     Text(
                                         "Stop desktop",
                                         modifier = Modifier.padding(start = 6.dp),
@@ -477,7 +523,7 @@ fun LinuxSystemPage(
                                     confirmation = FilesystemConfirmation.RESET
                                 },
                             ) {
-                                Icon(Icons.Outlined.RestartAlt, contentDescription = null)
+                                Icon(Icons.Rounded.RestartAlt, contentDescription = null)
                                 Text("Reset", modifier = Modifier.padding(start = 6.dp))
                             }
                             TextButton(
@@ -491,7 +537,7 @@ fun LinuxSystemPage(
                                     confirmation = FilesystemConfirmation.DELETE
                                 },
                             ) {
-                                Icon(Icons.Outlined.DeleteOutline, contentDescription = null)
+                                Icon(Icons.Rounded.DeleteOutline, contentDescription = null)
                                 Text("Delete", modifier = Modifier.padding(start = 6.dp))
                             }
                         }
@@ -519,20 +565,20 @@ fun LinuxSystemPage(
             title = {
                 Text(
                     if (action == FilesystemConfirmation.RESET) {
-                        "Reset this filesystem?"
+                        "Reset this Linux system?"
                     } else {
-                        "Delete this filesystem?"
+                        "Delete this Linux system?"
                     },
                 )
             },
             text = {
                 Text(
                     if (action == FilesystemConfirmation.RESET) {
-                        "All packages, settings, and files added to ${rootfs.name} will be " +
-                            "permanently erased. uDroid will immediately reinstall the original image."
+                        "Reset permanently removes the packages, settings, and files you added. " +
+                            "uDroid then installs a fresh copy of the original image."
                     } else {
-                        "This permanently removes ${rootfs.name}, including its packages, " +
-                            "settings, and files. This cannot be undone."
+                        "Delete permanently removes ${rootfs.name}, including its packages, " +
+                            "settings, and files. You can’t undo this."
                     },
                 )
             },
@@ -567,11 +613,72 @@ fun LinuxSystemPage(
             },
         )
     }
+
 }
 
 private enum class FilesystemConfirmation {
     RESET,
     DELETE,
+}
+
+@Composable
+private fun MountProfilePanel(
+    profile: ProotMountProfile,
+    enabled: Boolean,
+    crashed: Boolean,
+    message: String?,
+    onConfigure: () -> Unit,
+    onRetry: () -> Unit,
+) {
+    val enabledDefaults = PROOT_DEFAULT_MOUNTS.count { profile.isDefaultEnabled(it.id) }
+    val enabledCustom = profile.customMounts.count { it.enabled }
+    Surface(
+        modifier = Modifier.clickable(enabled = enabled, onClick = onConfigure),
+        color = Color.Transparent,
+        border = BorderStroke(1.dp, UdroidLine),
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Column {
+            ListItem(
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                headlineContent = { Text("Android and system files") },
+                supportingContent = {
+                    Column {
+                        Text("$enabledDefaults defaults · session mounts as needed · $enabledCustom custom")
+                        if (!enabled) Text("Stop Linux to make changes")
+                        if (crashed) {
+                            Text(
+                                "Last launch stopped unexpectedly",
+                                color = UdroidWarning,
+                            )
+                        }
+                        message?.let { Text(it) }
+                    }
+                },
+                leadingContent = {
+                    Icon(Icons.Rounded.Settings, contentDescription = null)
+                },
+                trailingContent = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(if (enabled) "Configure" else "Locked")
+                        if (enabled) {
+                            Icon(Icons.Rounded.ChevronRight, contentDescription = null)
+                        }
+                    }
+                },
+            )
+            if (crashed) {
+                HorizontalDivider(color = UdroidLine)
+                TextButton(
+                    modifier = Modifier.align(Alignment.End).padding(horizontal = 8.dp),
+                    onClick = onRetry,
+                ) {
+                    Icon(Icons.Rounded.Refresh, contentDescription = null)
+                    Text("Retry", modifier = Modifier.padding(start = 6.dp))
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -585,7 +692,7 @@ private fun AudioSettingsPanel(
     Surface(
         color = Color.Transparent,
         border = BorderStroke(1.dp, UdroidLine),
-        shape = RoundedCornerShape(12.dp),
+        shape = MaterialTheme.shapes.medium,
     ) {
         Column {
             SettingRow(
@@ -600,7 +707,7 @@ private fun AudioSettingsPanel(
                 enabled = true,
                 onCheckedChange = onOutputChanged,
             )
-            Divider(color = UdroidLine)
+            HorizontalDivider(color = UdroidLine)
             SettingRow(
                 title = "Device microphone",
                 detail =
@@ -611,7 +718,7 @@ private fun AudioSettingsPanel(
                 onCheckedChange = onMicrophoneChanged,
             )
             message?.let {
-                Divider(color = UdroidLine)
+                HorizontalDivider(color = UdroidLine)
                 Text(
                     text = it,
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
@@ -631,8 +738,7 @@ private fun OperationalStatePanel(
 ) {
     Surface(
         color = UdroidRaised,
-        border = BorderStroke(1.dp, UdroidLine),
-        shape = RoundedCornerShape(12.dp),
+        shape = MaterialTheme.shapes.medium,
     ) {
         Row(
             modifier = Modifier.padding(14.dp),
@@ -640,7 +746,7 @@ private fun OperationalStatePanel(
         ) {
             StateDatum(
                 modifier = Modifier.weight(1f),
-                label = "LINUX",
+                label = "Linux",
                 value =
                     if (runtimeOwnsSystem) {
                         snapshot.phase.name.lowercase().replaceFirstChar(Char::titlecase)
@@ -651,7 +757,7 @@ private fun OperationalStatePanel(
             )
             StateDatum(
                 modifier = Modifier.weight(1f),
-                label = "DESKTOP",
+                label = "Desktop",
                 value =
                     if (desktopOwnsSystem) {
                         snapshot.desktop.phase.name.lowercase().replaceFirstChar(Char::titlecase)
@@ -664,7 +770,7 @@ private fun OperationalStatePanel(
             )
             StateDatum(
                 modifier = Modifier.weight(1f),
-                label = "OWNER",
+                label = "Display",
                 value =
                     when {
                         desktopOwnsSystem -> ":0"
@@ -722,8 +828,7 @@ private fun SystemAction(
                 onClick = onClick,
             ),
         color = if (enabled) UdroidRaised else UdroidInset,
-        border = BorderStroke(1.dp, UdroidLine),
-        shape = RoundedCornerShape(11.dp),
+        shape = MaterialTheme.shapes.medium,
     ) {
         Column(
             modifier = Modifier.padding(vertical = 12.dp),
@@ -768,15 +873,15 @@ private fun DisplayOwnerRow(snapshot: RuntimeSnapshot) {
         ) {
             Text(
                 if (claimed) {
-                    "DISPLAY :${desktop.displayNumber ?: 0} · ${desktop.environmentName}"
+                    "Display :${desktop.displayNumber ?: 0} · ${desktop.environmentName}"
                 } else {
-                    "DISPLAY :0 · unclaimed"
+                    "Display :0 · available"
                 },
                 fontFamily = FontFamily.Monospace,
                 style = MaterialTheme.typography.labelLarge,
             )
             Text(
-                if (claimed) desktop.message else "Ready for one supervised desktop",
+                if (claimed) desktop.message else "Ready to start a desktop",
                 color = UdroidMuted,
                 style = MaterialTheme.typography.bodySmall,
             )
@@ -798,7 +903,7 @@ private fun DesktopEnvironmentRow(
                 .clickable(onClick = onSelect),
         color = if (selected) UdroidSoftGreen.copy(alpha = 0.42f) else Color.Transparent,
         border = BorderStroke(1.dp, if (selected) UdroidForest.copy(alpha = 0.35f) else UdroidLine),
-        shape = RoundedCornerShape(11.dp),
+        shape = MaterialTheme.shapes.medium,
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
@@ -834,6 +939,7 @@ private fun DesktopSettingsPanel(
     desktopRunning: Boolean,
     onCompositingChanged: (Boolean) -> Unit,
     onTouchScaleChanged: (Boolean) -> Unit,
+    onGraphicsProfileChanged: (DesktopGraphicsProfile) -> Unit,
 ) {
     val compositorSupport = environment.kind.compositorSupport
     val compositorConfigurable =
@@ -848,7 +954,7 @@ private fun DesktopSettingsPanel(
     Surface(
         color = Color.Transparent,
         border = BorderStroke(1.dp, UdroidLine),
-        shape = RoundedCornerShape(12.dp),
+        shape = MaterialTheme.shapes.medium,
     ) {
         Column {
             SettingRow(
@@ -856,31 +962,114 @@ private fun DesktopSettingsPanel(
                 detail =
                     when (compositorSupport) {
                         DesktopCompositorSupport.CONFIGURABLE ->
-                            "Disable for lower latency; enable for effects and transparency." +
-                                if (desktopRunning) " Applies after restart." else ""
+                            "Turn off for lower latency, or turn on for effects and transparency." +
+                                if (desktopRunning) " Restart the desktop to apply." else ""
                         DesktopCompositorSupport.REQUIRED ->
-                            "${environment.kind.desktopName} requires its compositor."
+                            "${environment.kind.desktopName} requires compositing"
                         DesktopCompositorSupport.EXTERNAL_OR_NONE ->
-                            "${environment.kind.desktopName} does not expose one standard switch."
+                            "${environment.kind.desktopName} has no standard compositing switch"
                         DesktopCompositorSupport.UNKNOWN ->
-                            "No safe compositor adapter is available for this session."
+                            "Compositing can’t be changed for this desktop"
                     },
                 checked = compositorChecked,
                 enabled = compositorConfigurable,
                 onCheckedChange = onCompositingChanged,
             )
-            Divider(color = UdroidLine)
+            HorizontalDivider(color = UdroidLine)
             SettingRow(
                 title = "Touch-sized interface",
                 detail =
-                    "Scale desktop controls and cursor for a phone display." +
-                        if (desktopRunning) " Applies after restart." else "",
+                    "Make desktop controls and the cursor easier to use on a phone." +
+                        if (desktopRunning) " Restart the desktop to apply." else "",
                 checked = configuration.touchScaleEnabled,
                 enabled = true,
                 onCheckedChange = onTouchScaleChanged,
             )
+            if (GFXSTREAM_PROFILE_ENABLED) {
+                HorizontalDivider(color = UdroidLine)
+                GraphicsProfileSelector(
+                    selected = configuration.graphicsProfile,
+                    desktopRunning = desktopRunning,
+                    onSelected = onGraphicsProfileChanged,
+                )
+            }
         }
     }
+}
+
+@Composable
+private fun GraphicsProfileSelector(
+    selected: DesktopGraphicsProfile,
+    desktopRunning: Boolean,
+    onSelected: (DesktopGraphicsProfile) -> Unit,
+) {
+    val gfxstreamSupported = "arm64-v8a" in Build.SUPPORTED_ABIS
+    Column(modifier = Modifier.padding(vertical = 8.dp)) {
+        Text(
+            "Graphics driver",
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
+            color = UdroidInk,
+            style = MaterialTheme.typography.titleMedium,
+        )
+        GraphicsProfileRow(
+            title = "Standard",
+            detail = "Use the distribution’s default graphics driver",
+            selected = selected == DesktopGraphicsProfile.STANDARD,
+            enabled = true,
+            onClick = { onSelected(DesktopGraphicsProfile.STANDARD) },
+        )
+        GraphicsProfileRow(
+            title = "gfxstream (experimental)",
+            detail =
+                if (gfxstreamSupported) {
+                    "Use Android’s Vulkan driver." +
+                        if (desktopRunning) " Restart the desktop to apply." else ""
+                } else {
+                    "Available only on arm64 devices"
+                },
+            selected = selected == DesktopGraphicsProfile.GFXSTREAM_EXPERIMENTAL,
+            enabled = gfxstreamSupported,
+            onClick = { onSelected(DesktopGraphicsProfile.GFXSTREAM_EXPERIMENTAL) },
+        )
+    }
+}
+
+@Composable
+private fun GraphicsProfileRow(
+    title: String,
+    detail: String,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    ListItem(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable(enabled = enabled, onClick = onClick),
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+        leadingContent = {
+            RadioButton(
+                selected = selected,
+                enabled = enabled,
+                onClick = null,
+            )
+        },
+        headlineContent = {
+            Text(
+                title,
+                color = if (enabled) UdroidInk else UdroidMuted,
+                style = MaterialTheme.typography.titleMedium,
+            )
+        },
+        supportingContent = {
+            Text(
+                detail,
+                color = UdroidMuted,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        },
+    )
 }
 
 @Composable
@@ -891,28 +1080,34 @@ private fun SettingRow(
     enabled: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
-    Row(
-        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
+    ListItem(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable(enabled = enabled) { onCheckedChange(!checked) },
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+        headlineContent = {
             Text(
                 title,
                 color = if (enabled) UdroidInk else UdroidMuted,
                 style = MaterialTheme.typography.titleMedium,
             )
+        },
+        supportingContent = {
             Text(
                 detail,
                 color = UdroidMuted,
                 style = MaterialTheme.typography.bodySmall,
             )
-        }
-        Switch(
-            checked = checked,
-            enabled = enabled,
-            onCheckedChange = onCheckedChange,
-        )
-    }
+        },
+        trailingContent = {
+            Switch(
+                checked = checked,
+                enabled = enabled,
+                onCheckedChange = onCheckedChange,
+            )
+        },
+    )
 }
 
 @Composable

@@ -11,9 +11,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -36,35 +33,30 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Apps
-import androidx.compose.material.icons.filled.DesktopWindows
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Memory
-import androidx.compose.material.icons.filled.Storage
-import androidx.compose.material.icons.filled.Terminal
-import androidx.compose.material.icons.outlined.CheckCircle
-import androidx.compose.material.icons.outlined.Apps
-import androidx.compose.material.icons.outlined.Code
-import androidx.compose.material.icons.outlined.ContentCopy
-import androidx.compose.material.icons.outlined.ErrorOutline
-import androidx.compose.material.icons.outlined.Feedback
-import androidx.compose.material.icons.outlined.FavoriteBorder
-import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.DesktopWindows
-import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.Memory
-import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.Storage
-import androidx.compose.material.icons.outlined.SystemUpdateAlt
-import androidx.compose.material.icons.outlined.Terminal
+import androidx.compose.material.icons.rounded.Apps
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Code
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.DesktopWindows
+import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.Feedback
+import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Memory
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Storage
+import androidx.compose.material.icons.rounded.SystemUpdateAlt
+import androidx.compose.material.icons.rounded.Terminal
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Button
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -75,8 +67,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalUriHandler
@@ -85,10 +83,12 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
 import org.json.JSONObject
 import org.randomcoder.udroid.BuildConfig
 import org.randomcoder.udroid.catalog.DistroCatalogState
 import org.randomcoder.udroid.catalog.DistroVariant
+import org.randomcoder.udroid.catalog.LinuxDistribution
 import org.randomcoder.udroid.audio.AudioConfiguration
 import org.randomcoder.udroid.install.InstallProgress
 import org.randomcoder.udroid.linuxapps.LinuxApplication
@@ -100,8 +100,12 @@ import org.randomcoder.udroid.oci.OciHubTagsState
 import org.randomcoder.udroid.runtime.CapabilityResult
 import org.randomcoder.udroid.runtime.CapabilityStatus
 import org.randomcoder.udroid.runtime.DesktopConfiguration
+import org.randomcoder.udroid.runtime.DesktopGraphicsProfile
 import org.randomcoder.udroid.runtime.DesktopEnvironment
+import org.randomcoder.udroid.runtime.DesktopSessionPhase
 import org.randomcoder.udroid.runtime.InstalledRootfs
+import org.randomcoder.udroid.runtime.ProotMountProfile
+import org.randomcoder.udroid.runtime.ProotMountProfileStore
 import org.randomcoder.udroid.runtime.RuntimePhase
 import org.randomcoder.udroid.runtime.RuntimeSnapshot
 import org.randomcoder.udroid.runtime.RuntimeSupervisorService
@@ -114,15 +118,17 @@ enum class UdroidDestination(
     val icon: ImageVector,
     val selectedIcon: ImageVector,
 ) {
-    HOME("Home", Icons.Outlined.Home, Icons.Filled.Home),
-    DISTROS("Linux", Icons.Outlined.Storage, Icons.Filled.Storage),
-    INSTALL("Install", Icons.Outlined.Storage, Icons.Filled.Storage),
-    SYSTEM("System", Icons.Outlined.Storage, Icons.Filled.Storage),
-    TERMINAL("Terminal", Icons.Outlined.Terminal, Icons.Filled.Terminal),
-    APPS("Apps", Icons.Outlined.Apps, Icons.Filled.Apps),
-    DESKTOP("Desktop", Icons.Outlined.DesktopWindows, Icons.Filled.DesktopWindows),
-    DEVICE("Device", Icons.Outlined.Memory, Icons.Filled.Memory),
-    ABOUT("About", Icons.Outlined.Info, Icons.Filled.Info),
+    HOME("Home", Icons.Rounded.Home, Icons.Rounded.Home),
+    DISTROS("Linux", Icons.Rounded.Storage, Icons.Rounded.Storage),
+    INSTALL("Install", Icons.Rounded.Storage, Icons.Rounded.Storage),
+    SYSTEM("System", Icons.Rounded.Storage, Icons.Rounded.Storage),
+    MOUNTS("Mounts", Icons.Rounded.Tune, Icons.Rounded.Tune),
+    MOUNT_EDITOR("Mounts", Icons.Rounded.Tune, Icons.Rounded.Tune),
+    TERMINAL("Terminal", Icons.Rounded.Terminal, Icons.Rounded.Terminal),
+    APPS("Apps", Icons.Rounded.Apps, Icons.Rounded.Apps),
+    DESKTOP("Desktop", Icons.Rounded.DesktopWindows, Icons.Rounded.DesktopWindows),
+    DEVICE("Device", Icons.Rounded.Memory, Icons.Rounded.Memory),
+    ABOUT("About", Icons.Rounded.Info, Icons.Rounded.Info),
 }
 
 internal enum class NavigationMotion {
@@ -150,6 +156,8 @@ private val UdroidDestination.navigationDepth: Int
             UdroidDestination.INSTALL,
             UdroidDestination.SYSTEM,
             -> 1
+            UdroidDestination.MOUNTS -> 2
+            UdroidDestination.MOUNT_EDITOR -> 3
             else -> 0
         }
 
@@ -196,10 +204,12 @@ fun UdroidApp(
     onOpenRootfsTerminal: (String) -> Unit,
     onOpenRootfsApps: (String) -> Unit,
     onResetRootfs: (String, DistroVariant?) -> Unit,
+    onCreateRootfsVariation: (String, DistroVariant?, ProotMountProfile) -> Unit,
     onDeleteRootfs: (String) -> Unit,
     onSelectDesktopEnvironment: (String) -> Unit,
     onCompositingChanged: (Boolean) -> Unit,
     onTouchScaleChanged: (Boolean) -> Unit,
+    onGraphicsProfileChanged: (DesktopGraphicsProfile) -> Unit,
     onAudioOutputChanged: (Boolean) -> Unit,
     onMicrophoneChanged: (Boolean) -> Unit,
     onStartDesktop: () -> Unit,
@@ -219,6 +229,8 @@ fun UdroidApp(
     onInstallUpdate: () -> Unit,
     onOpenUpdateRelease: () -> Unit,
 ) {
+    var mountConfigurationSourceSystemId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedMountProfileSystemId by rememberSaveable { mutableStateOf<String?>(null) }
     val hasInstalledLinux = installedRootfsName != null
     val requestedJourney =
         workspaceJourney(
@@ -232,6 +244,9 @@ fun UdroidApp(
         when (activeDestination) {
             UdroidDestination.INSTALL,
             UdroidDestination.SYSTEM,
+            -> UdroidDestination.DISTROS
+            UdroidDestination.MOUNTS,
+            UdroidDestination.MOUNT_EDITOR,
             -> UdroidDestination.DISTROS
             else -> activeDestination
         }
@@ -261,6 +276,7 @@ fun UdroidApp(
                             .windowInsetsPadding(WindowInsets.safeDrawing),
                     snapshot = snapshot,
                     service = runtimeService,
+                    installedRootfses = installedRootfses,
                     onStart = onStart,
                     onStop = onStop,
                     onExit = { onDestinationSelected(UdroidDestination.SYSTEM) },
@@ -272,7 +288,7 @@ fun UdroidApp(
 
     Surface(
         modifier = Modifier.fillMaxSize(),
-        color = UdroidCanvas,
+        color = MaterialTheme.colorScheme.background,
     ) {
         BoxWithConstraints(
             modifier =
@@ -288,7 +304,7 @@ fun UdroidApp(
                         destinations = requestedJourney.destinations,
                         onSelected = onPrimaryDestinationSelected,
                     )
-                    Divider(
+                    HorizontalDivider(
                         modifier = Modifier.fillMaxHeight().width(1.dp),
                         color = UdroidLine,
                     )
@@ -319,6 +335,8 @@ fun UdroidApp(
                         linuxApplicationsState = linuxApplicationsState,
                         linuxApplicationMessage = linuxApplicationMessage,
                         showInstallTerminal = showInstallTerminal,
+                        mountConfigurationSourceSystemId = mountConfigurationSourceSystemId,
+                        selectedMountProfileSystemId = selectedMountProfileSystemId,
                         onDestinationSelected = onDestinationSelected,
                         onPrimaryDestinationSelected = onPrimaryDestinationSelected,
                         onStart = onStart,
@@ -333,11 +351,26 @@ fun UdroidApp(
                         onOpenInstalledSystem = onOpenInstalledSystem,
                         onOpenRootfsTerminal = onOpenRootfsTerminal,
                         onOpenRootfsApps = onOpenRootfsApps,
+                        onSelectMountProfile = { systemId ->
+                            mountConfigurationSourceSystemId = systemId
+                            selectedMountProfileSystemId = null
+                            onDestinationSelected(UdroidDestination.MOUNTS)
+                        },
+                        onCreateMountProfile = {
+                            selectedMountProfileSystemId = null
+                            onDestinationSelected(UdroidDestination.MOUNT_EDITOR)
+                        },
+                        onEditMountProfile = { systemId ->
+                            selectedMountProfileSystemId = systemId
+                            onDestinationSelected(UdroidDestination.MOUNT_EDITOR)
+                        },
                         onResetRootfs = onResetRootfs,
+                        onCreateRootfsVariation = onCreateRootfsVariation,
                         onDeleteRootfs = onDeleteRootfs,
                         onSelectDesktopEnvironment = onSelectDesktopEnvironment,
                         onCompositingChanged = onCompositingChanged,
                         onTouchScaleChanged = onTouchScaleChanged,
+                        onGraphicsProfileChanged = onGraphicsProfileChanged,
                         onAudioOutputChanged = onAudioOutputChanged,
                         onMicrophoneChanged = onMicrophoneChanged,
                         onStartDesktop = onStartDesktop,
@@ -387,6 +420,8 @@ fun UdroidApp(
                         linuxApplicationsState = linuxApplicationsState,
                         linuxApplicationMessage = linuxApplicationMessage,
                         showInstallTerminal = showInstallTerminal,
+                        mountConfigurationSourceSystemId = mountConfigurationSourceSystemId,
+                        selectedMountProfileSystemId = selectedMountProfileSystemId,
                         onDestinationSelected = onDestinationSelected,
                         onPrimaryDestinationSelected = onPrimaryDestinationSelected,
                         onStart = onStart,
@@ -401,11 +436,26 @@ fun UdroidApp(
                         onOpenInstalledSystem = onOpenInstalledSystem,
                         onOpenRootfsTerminal = onOpenRootfsTerminal,
                         onOpenRootfsApps = onOpenRootfsApps,
+                        onSelectMountProfile = { systemId ->
+                            mountConfigurationSourceSystemId = systemId
+                            selectedMountProfileSystemId = null
+                            onDestinationSelected(UdroidDestination.MOUNTS)
+                        },
+                        onCreateMountProfile = {
+                            selectedMountProfileSystemId = null
+                            onDestinationSelected(UdroidDestination.MOUNT_EDITOR)
+                        },
+                        onEditMountProfile = { systemId ->
+                            selectedMountProfileSystemId = systemId
+                            onDestinationSelected(UdroidDestination.MOUNT_EDITOR)
+                        },
                         onResetRootfs = onResetRootfs,
+                        onCreateRootfsVariation = onCreateRootfsVariation,
                         onDeleteRootfs = onDeleteRootfs,
                         onSelectDesktopEnvironment = onSelectDesktopEnvironment,
                         onCompositingChanged = onCompositingChanged,
                         onTouchScaleChanged = onTouchScaleChanged,
+                        onGraphicsProfileChanged = onGraphicsProfileChanged,
                         onAudioOutputChanged = onAudioOutputChanged,
                         onMicrophoneChanged = onMicrophoneChanged,
                         onStartDesktop = onStartDesktop,
@@ -469,6 +519,8 @@ private fun ManagementPane(
     linuxApplicationsState: LinuxApplicationsState,
     linuxApplicationMessage: String?,
     showInstallTerminal: Boolean,
+    mountConfigurationSourceSystemId: String?,
+    selectedMountProfileSystemId: String?,
     onDestinationSelected: (UdroidDestination) -> Unit,
     onPrimaryDestinationSelected: (UdroidDestination) -> Unit,
     onStart: () -> Unit,
@@ -483,11 +535,16 @@ private fun ManagementPane(
     onOpenInstalledSystem: (String) -> Unit,
     onOpenRootfsTerminal: (String) -> Unit,
     onOpenRootfsApps: (String) -> Unit,
+    onSelectMountProfile: (String) -> Unit,
+    onCreateMountProfile: () -> Unit,
+    onEditMountProfile: (String) -> Unit,
     onResetRootfs: (String, DistroVariant?) -> Unit,
+    onCreateRootfsVariation: (String, DistroVariant?, ProotMountProfile) -> Unit,
     onDeleteRootfs: (String) -> Unit,
     onSelectDesktopEnvironment: (String) -> Unit,
     onCompositingChanged: (Boolean) -> Unit,
     onTouchScaleChanged: (Boolean) -> Unit,
+    onGraphicsProfileChanged: (DesktopGraphicsProfile) -> Unit,
     onAudioOutputChanged: (Boolean) -> Unit,
     onMicrophoneChanged: (Boolean) -> Unit,
     onStartDesktop: () -> Unit,
@@ -508,16 +565,14 @@ private fun ManagementPane(
     onOpenUpdateRelease: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val spatialMotion = UdroidMotion.defaultSpatial<IntOffset>()
+    val effectsMotion = UdroidMotion.defaultEffects<Float>()
+    val fastEffectsMotion = UdroidMotion.fastEffects<Float>()
+    val slowEffectsMotion = UdroidMotion.slowEffects<Float>()
+
     Column(modifier = modifier.fillMaxHeight()) {
-        WorkspaceTopBar(
-            snapshot = snapshot,
-            onOpenTerminal = { onDestinationSelected(UdroidDestination.TERMINAL) },
-        )
         Box(
-            modifier =
-                Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
+            modifier = Modifier.weight(1f).fillMaxWidth(),
             contentAlignment = Alignment.TopCenter,
         ) {
             Box(
@@ -533,60 +588,34 @@ private fun ManagementPane(
                             NavigationMotion.FORWARD ->
                                 (
                                     slideInHorizontally(
-                                        animationSpec =
-                                            tween(
-                                                durationMillis = 190,
-                                                easing = FastOutSlowInEasing,
-                                            ),
+                                        animationSpec = spatialMotion,
                                         initialOffsetX = { width -> width / 10 },
                                     ) +
-                                        fadeIn(
-                                            animationSpec =
-                                                tween(
-                                                    durationMillis = 150,
-                                                    delayMillis = 25,
-                                                ),
-                                        )
+                                        fadeIn(animationSpec = effectsMotion)
                                 ).togetherWith(
                                     slideOutHorizontally(
-                                        animationSpec = tween(durationMillis = 150),
+                                        animationSpec = spatialMotion,
                                         targetOffsetX = { width -> -width / 24 },
                                     ) +
-                                        fadeOut(animationSpec = tween(durationMillis = 110)),
+                                        fadeOut(animationSpec = fastEffectsMotion),
                                 )
                             NavigationMotion.BACK ->
                                 (
                                     slideInHorizontally(
-                                        animationSpec =
-                                            tween(
-                                                durationMillis = 190,
-                                                easing = FastOutSlowInEasing,
-                                            ),
+                                        animationSpec = spatialMotion,
                                         initialOffsetX = { width -> -width / 10 },
                                     ) +
-                                        fadeIn(
-                                            animationSpec =
-                                                tween(
-                                                    durationMillis = 150,
-                                                    delayMillis = 25,
-                                                ),
-                                        )
+                                        fadeIn(animationSpec = effectsMotion)
                                 ).togetherWith(
                                     slideOutHorizontally(
-                                        animationSpec = tween(durationMillis = 150),
+                                        animationSpec = spatialMotion,
                                         targetOffsetX = { width -> width / 24 },
                                     ) +
-                                        fadeOut(animationSpec = tween(durationMillis = 110)),
+                                        fadeOut(animationSpec = fastEffectsMotion),
                                 )
                             NavigationMotion.FADE ->
-                                fadeIn(
-                                    animationSpec =
-                                        tween(
-                                            durationMillis = 150,
-                                            delayMillis = 35,
-                                        ),
-                                ).togetherWith(
-                                    fadeOut(animationSpec = tween(durationMillis = 100)),
+                                fadeIn(animationSpec = slowEffectsMotion).togetherWith(
+                                    fadeOut(animationSpec = fastEffectsMotion),
                                 )
                         }
                     },
@@ -625,6 +654,118 @@ private fun ManagementPane(
                                 onDestinationSelected(UdroidDestination.ABOUT)
                             },
                         )
+                    }
+                    UdroidDestination.MOUNTS -> {
+                        val sourceSystemId = mountConfigurationSourceSystemId
+                        if (sourceSystemId == null) {
+                            onDestinationSelected(UdroidDestination.DISTROS)
+                        } else {
+                            val sourceRootfs =
+                                installedRootfses.firstOrNull { it.name == sourceSystemId }
+                            val sourceDistro =
+                                (catalogueState as? DistroCatalogState.Ready)
+                                    ?.catalog
+                                    ?.variants
+                                    ?.firstOrNull { it.internalName == sourceSystemId }
+                            if (sourceRootfs == null) {
+                                onDestinationSelected(UdroidDestination.DISTROS)
+                            } else {
+                                ProotMountConfigurationsPage(
+                                    sourceSystemId = sourceSystemId,
+                                    sourceSystemTitle =
+                                        sourceDistro?.releaseName
+                                            ?: installedSystemTitle(sourceSystemId),
+                                    distribution =
+                                        sourceDistro?.distribution
+                                            ?: distributionFromSystemId(sourceSystemId),
+                                    installedRootfses = installedRootfses,
+                                    activeRootfsName = installedRootfsName,
+                                    installProgress = installProgress,
+                                    onBack = {
+                                        onDestinationSelected(UdroidDestination.SYSTEM)
+                                    },
+                                    onCreateConfiguration = {
+                                        onCreateMountProfile()
+                                    },
+                                    onEditConfiguration = { configurationSystemId ->
+                                        onEditMountProfile(configurationSystemId)
+                                    },
+                                    onLaunchDistro = onOpenInstalledSystem,
+                                    onDeleteConfiguration = onDeleteRootfs,
+                                )
+                            }
+                        }
+                    }
+                    UdroidDestination.MOUNT_EDITOR -> {
+                        val sourceSystemId = mountConfigurationSourceSystemId
+                        if (sourceSystemId == null) {
+                            onDestinationSelected(UdroidDestination.DISTROS)
+                        } else {
+                            val configurationSystemId = selectedMountProfileSystemId
+                            val targetSystemId = configurationSystemId ?: sourceSystemId
+                            val sourceDistro =
+                                (catalogueState as? DistroCatalogState.Ready)
+                                    ?.catalog
+                                    ?.variants
+                                    ?.firstOrNull { it.internalName == sourceSystemId }
+                            val runtimeBusy =
+                                snapshot.rootfsName == targetSystemId &&
+                                    snapshot.phase in
+                                    setOf(
+                                        RuntimePhase.STARTING,
+                                        RuntimePhase.RUNNING,
+                                        RuntimePhase.STOPPING,
+                                    )
+                            val desktopBusy =
+                                snapshot.desktop.rootfsName == targetSystemId &&
+                                    snapshot.desktop.phase in
+                                    setOf(
+                                        DesktopSessionPhase.STARTING,
+                                        DesktopSessionPhase.RUNNING,
+                                        DesktopSessionPhase.STOPPING,
+                                    )
+                            ProotMountConfigurationEditorPage(
+                                sourceSystemId = sourceSystemId,
+                                configurationSystemId = configurationSystemId,
+                                systemTitle =
+                                    if (configurationSystemId == null) {
+                                        sourceDistro?.releaseName
+                                            ?: installedSystemTitle(sourceSystemId)
+                                    } else {
+                                        installProgress
+                                            ?.takeIf {
+                                                it.installationName == configurationSystemId
+                                            }?.displayName
+                                            ?: installedSystemTitle(configurationSystemId)
+                                    },
+                                distribution =
+                                    sourceDistro?.distribution
+                                        ?: distributionFromSystemId(sourceSystemId),
+                                active = configurationSystemId == installedRootfsName,
+                                editingEnabled =
+                                    if (configurationSystemId == null) {
+                                        installProgress == null
+                                    } else {
+                                        !runtimeBusy &&
+                                            !desktopBusy &&
+                                            rootfsMaintenanceName != targetSystemId
+                                    },
+                                externalMessage = rootfsMaintenanceMessage,
+                                onBack = {
+                                    onDestinationSelected(UdroidDestination.MOUNTS)
+                                },
+                                onOpenSessionFeatures = {
+                                    onDestinationSelected(UdroidDestination.SYSTEM)
+                                },
+                                onCreateDistro = { profile ->
+                                    onCreateRootfsVariation(
+                                        sourceSystemId,
+                                        sourceDistro,
+                                        profile,
+                                    )
+                                },
+                            )
+                        }
                     }
                     UdroidDestination.DISTROS ->
                         selectedOciRepository?.let { repository ->
@@ -673,6 +814,16 @@ private fun ManagementPane(
                         if (selectedRootfs == null) {
                             onDestinationSelected(UdroidDestination.DISTROS)
                         } else {
+                            val context = LocalContext.current
+                            val mountProfileStore = remember(context) {
+                                ProotMountProfileStore(context)
+                            }
+                            val mountConfigurationSourceId =
+                                remember(selectedRootfs.name) {
+                                    runCatching {
+                                        mountProfileStore.load(selectedRootfs.name).sourceSystemId
+                                    }.getOrNull() ?: selectedRootfs.name
+                                }
                             LinuxSystemPage(
                                 rootfs = selectedRootfs,
                                 distro = selectedDistro,
@@ -710,12 +861,16 @@ private fun ManagementPane(
                                 onSelectEnvironment = onSelectDesktopEnvironment,
                                 onCompositingChanged = onCompositingChanged,
                                 onTouchScaleChanged = onTouchScaleChanged,
+                                onGraphicsProfileChanged = onGraphicsProfileChanged,
                                 onAudioOutputChanged = onAudioOutputChanged,
                                 onMicrophoneChanged = onMicrophoneChanged,
                                 onStartDesktop = onStartDesktop,
                                 onStopTerminal = onStop,
                                 onStopDesktop = onStopDesktop,
                                 onRestartDesktop = onRestartDesktop,
+                                onConfigureMounts = {
+                                    onSelectMountProfile(mountConfigurationSourceId)
+                                },
                                 onResetFilesystem = {
                                     onResetRootfs(selectedRootfs.name, selectedDistro)
                                 },
@@ -762,66 +917,13 @@ private fun ManagementPane(
 }
 
 @Composable
-private fun WorkspaceTopBar(
-    snapshot: RuntimeSnapshot,
-    onOpenTerminal: () -> Unit,
-) {
-    Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .height(62.dp)
-                .background(UdroidSurface)
-                .padding(horizontal = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        UdroidBrand(compact = true)
-        Spacer(Modifier.weight(1f))
-        if (snapshot.phase == RuntimePhase.RUNNING) {
-            Surface(
-                modifier = Modifier.clickable(onClick = onOpenTerminal),
-                color = UdroidSoftGreen,
-                shape = RoundedCornerShape(9.dp),
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Surface(
-                        modifier = Modifier.size(7.dp),
-                        color = UdroidForest,
-                        shape = CircleShape,
-                    ) {}
-                    Spacer(Modifier.width(7.dp))
-                    Text(
-                        "SESSION LIVE",
-                        color = UdroidForest,
-                        fontFamily = FontFamily.Monospace,
-                        style = MaterialTheme.typography.labelMedium,
-                    )
-                }
-            }
-            Spacer(Modifier.width(12.dp))
-        }
-        Text(
-            "v${BuildConfig.VERSION_NAME}",
-            color = UdroidFaint,
-            fontFamily = FontFamily.Monospace,
-            style = MaterialTheme.typography.labelMedium,
-        )
-    }
-    Divider(color = UdroidLine)
-}
-
-@Composable
 private fun WorkspaceNavigationBar(
     selected: UdroidDestination,
     destinations: List<UdroidDestination>,
     onSelected: (UdroidDestination) -> Unit,
 ) {
     NavigationBar(
-        containerColor = UdroidSurface,
-        tonalElevation = 0.dp,
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
         windowInsets = WindowInsets(0, 0, 0, 0),
     ) {
         destinations.forEach { destination ->
@@ -854,7 +956,7 @@ private fun WorkspaceNavigationRail(
     onSelected: (UdroidDestination) -> Unit,
 ) {
     NavigationRail(
-        containerColor = UdroidSurface,
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
         windowInsets = WindowInsets(0, 0, 0, 0),
     ) {
         Spacer(Modifier.height(12.dp))
@@ -896,20 +998,25 @@ private fun WorkspacePage(
         modifier =
             Modifier
                 .fillMaxSize()
-                .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(horizontal = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         item {
             UdroidPageHeader(
-                title = "Home",
-                subtitle = "Everything in one place",
-                modifier = Modifier.padding(top = 18.dp, bottom = 4.dp),
+                title = "Your Linux workspace",
+                subtitle =
+                    if (hasInstalledLinux) {
+                        "Open Linux terminals, apps, and desktops"
+                    } else {
+                        "Install Linux to get started"
+                    },
+                modifier = Modifier.padding(top = 24.dp, bottom = 12.dp),
                 trailing = {
                     IconButton(onClick = onRefresh) {
                         Icon(
-                            imageVector = Icons.Outlined.Refresh,
+                            imageVector = Icons.Rounded.Refresh,
                             contentDescription = "Refresh workspace",
-                            tint = UdroidMuted,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 },
@@ -917,18 +1024,18 @@ private fun WorkspacePage(
         }
         item {
             UdroidSectionLabel(
-                text = "Everything",
-                modifier = Modifier.padding(top = 4.dp, bottom = 1.dp),
+                text = if (hasInstalledLinux) "Workspace" else "Get started",
+                modifier = Modifier.padding(top = 4.dp, bottom = 6.dp),
             )
         }
         item {
             UdroidToolRow(
-                icon = Icons.Outlined.Storage,
+                icon = Icons.Rounded.Storage,
                 title = "Linux systems",
                 subtitle =
                     distro?.releaseName
                         ?: rootfsName?.let(::installedSystemTitle)
-                        ?: "Choose and install a distribution",
+                        ?: "Choose a Linux distribution",
                 trailingText =
                     when {
                         installedCount > 1 -> "$installedCount installed"
@@ -940,13 +1047,13 @@ private fun WorkspacePage(
         }
         item {
             UdroidToolRow(
-                icon = Icons.Outlined.Terminal,
+                icon = Icons.Rounded.Terminal,
                 title = "Terminal",
                 subtitle =
                     if (hasInstalledLinux) {
                         "Open a shell in the installed Linux system"
                     } else {
-                        "Install Linux to open a terminal"
+                        "Install Linux to use the terminal"
                     },
                 trailingText =
                     when {
@@ -959,38 +1066,36 @@ private fun WorkspacePage(
         }
         item {
             UdroidToolRow(
-                icon = Icons.Outlined.Apps,
+                icon = Icons.Rounded.Apps,
                 title = "Linux apps",
                 subtitle =
                     if (hasInstalledLinux) {
                         "Find and launch installed applications"
                     } else {
-                        "Install Linux to discover applications"
+                        "Install Linux to discover apps"
                     },
-                trailingText = if (hasInstalledLinux) null else "Needs Linux",
                 onClick = onOpenApps,
             )
         }
         item {
             UdroidToolRow(
-                icon = Icons.Outlined.DesktopWindows,
+                icon = Icons.Rounded.DesktopWindows,
                 title = "Desktop",
                 subtitle =
                     if (hasInstalledLinux) {
                         "Open the graphical Linux desktop"
                     } else {
-                        "Install Linux to use a graphical desktop"
+                        "Install Linux to use a desktop"
                     },
-                trailingText = if (hasInstalledLinux) null else "Needs Linux",
                 onClick = onOpenDesktop,
             )
         }
         item {
             val passed = capabilities.count { it.status == CapabilityStatus.PASS }
             UdroidToolRow(
-                icon = Icons.Outlined.Memory,
+                icon = Icons.Rounded.Memory,
                 title = "Device compatibility",
-                subtitle = "Runtime, architecture, and optional capabilities",
+                subtitle = "Check which features work on this device",
                 trailingText =
                     if (capabilities.isEmpty()) {
                         null
@@ -1002,9 +1107,9 @@ private fun WorkspacePage(
         }
         item {
             UdroidToolRow(
-                icon = Icons.Outlined.Info,
+                icon = Icons.Rounded.Info,
                 title = "About uDroid",
-                subtitle = "App updates, supervisor journal, and project details",
+                subtitle = "Updates, support, and app details",
                 onClick = onOpenAbout,
             )
         }
@@ -1023,19 +1128,18 @@ private fun AppUpdatePanel(
     val release = state.release ?: return
     Surface(
         color = UdroidRaised,
-        shape = RoundedCornerShape(14.dp),
-        border = BorderStroke(1.dp, UdroidLine),
+        shape = MaterialTheme.shapes.large,
     ) {
         Column(modifier = Modifier.padding(15.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(
                     modifier = Modifier.size(38.dp),
                     color = UdroidSoftGreen,
-                    shape = RoundedCornerShape(9.dp),
+                    shape = MaterialTheme.shapes.medium,
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
-                            imageVector = Icons.Outlined.SystemUpdateAlt,
+                            imageVector = Icons.Rounded.SystemUpdateAlt,
                             contentDescription = null,
                             tint = UdroidForest,
                         )
@@ -1069,7 +1173,7 @@ private fun AppUpdatePanel(
             if (state.phase == AppUpdatePhase.DOWNLOADING) {
                 Spacer(Modifier.height(12.dp))
                 LinearProgressIndicator(
-                    progress = state.percentage / 100f,
+                    progress = { state.percentage / 100f },
                     modifier = Modifier.fillMaxWidth(),
                     color = UdroidForest,
                 )
@@ -1098,21 +1202,18 @@ private fun AppUpdatePanel(
                     AppUpdatePhase.DOWNLOADING ->
                         OutlinedButton(
                             onClick = onCancel,
-                            shape = RoundedCornerShape(9.dp),
                         ) {
                             Text("Pause")
                         }
                     AppUpdatePhase.READY ->
                         Button(
                             onClick = onInstall,
-                            shape = RoundedCornerShape(9.dp),
                         ) {
                             Text("Install update")
                         }
                     else ->
                         Button(
                             onClick = onDownload,
-                            shape = RoundedCornerShape(9.dp),
                         ) {
                             Text("Download update")
                         }
@@ -1127,13 +1228,13 @@ private fun AppUpdatePanel(
 
 private fun updateStatusText(state: AppUpdateState): String =
     when (state.phase) {
-        AppUpdatePhase.IDLE -> "Current version ${BuildConfig.VERSION_NAME} · Tap to check"
-        AppUpdatePhase.CHECKING -> "Checking GitHub releases…"
+        AppUpdatePhase.IDLE -> "Version ${BuildConfig.VERSION_NAME} is installed"
+        AppUpdatePhase.CHECKING -> "Checking for updates…"
         AppUpdatePhase.UP_TO_DATE -> "Version ${BuildConfig.VERSION_NAME} is current"
         AppUpdatePhase.AVAILABLE -> state.message ?: "A verified release is available"
-        AppUpdatePhase.DOWNLOADING -> "Downloading · ${state.percentage}%"
+        AppUpdatePhase.DOWNLOADING -> "Downloading update · ${state.percentage}%"
         AppUpdatePhase.READY -> "Verified and ready to install"
-        AppUpdatePhase.FAILED -> state.message ?: "Update check needs attention"
+        AppUpdatePhase.FAILED -> state.message ?: "Couldn’t check for updates"
     }
 
 @Composable
@@ -1151,12 +1252,12 @@ private fun DevicePage(
         item {
             UdroidPageHeader(
                 title = "Device",
-                subtitle = "Runtime compatibility and optional hardware",
+                subtitle = "Features available on this device",
                 modifier = Modifier.padding(top = 18.dp, bottom = 8.dp),
                 trailing = {
                     IconButton(onClick = onRefresh) {
                         Icon(
-                            Icons.Outlined.Refresh,
+                            Icons.Rounded.Refresh,
                             contentDescription = "Run probes again",
                             tint = UdroidMuted,
                         )
@@ -1176,50 +1277,40 @@ private fun CapabilityRow(capability: CapabilityResult) {
     val (icon, tint, label) =
         when (capability.status) {
             CapabilityStatus.PASS ->
-                Triple(Icons.Outlined.CheckCircle, UdroidForest, "Available")
+                Triple(Icons.Rounded.CheckCircle, UdroidForest, "Available")
             CapabilityStatus.FAIL ->
                 Triple(
-                    Icons.Outlined.ErrorOutline,
+                    Icons.Rounded.ErrorOutline,
                     if (capability.required) MaterialTheme.colorScheme.error else UdroidWarning,
                     if (capability.required) "Required" else "Unavailable",
                 )
             CapabilityStatus.INFO ->
-                Triple(Icons.Outlined.Info, Color(0xFF35658A), "Detected")
+                Triple(Icons.Rounded.Info, MaterialTheme.colorScheme.tertiary, "Detected")
         }
-    Surface(
-        color = UdroidRaised,
-        shape = RoundedCornerShape(11.dp),
-        border = BorderStroke(1.dp, UdroidLine),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+    ListItem(
+        modifier = Modifier.clip(MaterialTheme.shapes.medium),
+        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        leadingContent = {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
                 tint = tint,
             )
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    capability.name,
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Text(
-                    capability.detail,
-                    color = UdroidMuted,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-            Spacer(Modifier.width(10.dp))
+        },
+        headlineContent = {
+            Text(capability.name, style = MaterialTheme.typography.titleMedium)
+        },
+        supportingContent = {
+            Text(capability.detail, style = MaterialTheme.typography.bodySmall)
+        },
+        trailingContent = {
             Text(
                 label,
                 color = tint,
                 style = MaterialTheme.typography.labelLarge,
             )
-        }
-    }
+        },
+    )
 }
 
 @Composable
@@ -1246,15 +1337,14 @@ private fun AboutPage(
         item {
             UdroidPageHeader(
                 title = "About uDroid",
-                subtitle = "App details, updates, and diagnostics",
+                subtitle = "Updates, support, and app details",
                 modifier = Modifier.padding(top = 18.dp, bottom = 4.dp),
             )
         }
         item {
             Surface(
                 color = UdroidRaised,
-                shape = RoundedCornerShape(16.dp),
-                border = BorderStroke(1.dp, UdroidLine),
+                shape = MaterialTheme.shapes.large,
             ) {
                 Column(modifier = Modifier.padding(18.dp)) {
                     Row(
@@ -1271,14 +1361,14 @@ private fun AboutPage(
                     }
                     Spacer(Modifier.height(14.dp))
                     Text(
-                        "A Linux experience shaped for Android",
+                        "Run Linux on Android",
                         fontWeight = FontWeight.SemiBold,
                         style = MaterialTheme.typography.titleMedium,
                     )
                     Spacer(Modifier.height(5.dp))
                     Text(
-                        "The goal is a self-contained way to install and use Linux systems, " +
-                            "while keeping the terminal close when it is useful.",
+                        "Install and use Linux without leaving the app. " +
+                            "Open the terminal whenever you need more control.",
                         color = UdroidMuted,
                         style = MaterialTheme.typography.bodyMedium,
                     )
@@ -1293,7 +1383,7 @@ private fun AboutPage(
         }
         item {
             UdroidToolRow(
-                icon = Icons.Outlined.Code,
+                icon = Icons.Rounded.Code,
                 title = "GitHub repository",
                 subtitle = "Source code, releases, and project history",
                 onClick = { uriHandler.openUri(GITHUB_REPOSITORY_URL) },
@@ -1307,9 +1397,9 @@ private fun AboutPage(
         }
         item {
             UdroidToolRow(
-                icon = Icons.Outlined.Feedback,
-                title = "Request a feature or report an issue",
-                subtitle = "Open a new issue on GitHub",
+                icon = Icons.Rounded.Feedback,
+                title = "Request a feature",
+                subtitle = "Suggest an idea or report a problem on GitHub",
                 onClick = { uriHandler.openUri(GITHUB_ISSUES_URL) },
             )
         }
@@ -1348,12 +1438,12 @@ private fun AboutPage(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    UdroidSectionLabel(text = "Supervisor journal")
+                    UdroidSectionLabel(text = "Diagnostic log")
                     Text(
                         if (journalLines.size > visibleJournalLines.size) {
                             "Latest ${visibleJournalLines.size} events"
                         } else {
-                            "Lifecycle events and technical diagnostics"
+                            "Recent app and Linux session events"
                         },
                         color = UdroidMuted,
                         style = MaterialTheme.typography.bodySmall,
@@ -1374,22 +1464,22 @@ private fun AboutPage(
                             .getSystemService(ClipboardManager::class.java)
                             .setPrimaryClip(ClipData.newPlainText("uDroid diagnostics", report))
                         Toast
-                            .makeText(context, "Diagnostics copied", Toast.LENGTH_SHORT)
+                            .makeText(context, "Report copied", Toast.LENGTH_SHORT)
                             .show()
                     },
                 ) {
                     Icon(
-                        Icons.Outlined.ContentCopy,
+                        Icons.Rounded.ContentCopy,
                         contentDescription = null,
                         modifier = Modifier.size(18.dp),
                     )
                     Spacer(Modifier.width(5.dp))
-                    Text("Copy report")
+                    Text("Copy diagnostic report")
                 }
                 IconButton(onClick = onRefresh) {
                     Icon(
-                        Icons.Outlined.Refresh,
-                        contentDescription = "Refresh journal",
+                        Icons.Rounded.Refresh,
+                        contentDescription = "Refresh diagnostic log",
                         tint = UdroidMuted,
                     )
                 }
@@ -1399,11 +1489,10 @@ private fun AboutPage(
             item {
                 Surface(
                     color = UdroidRaised,
-                    shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, UdroidLine),
+                    shape = MaterialTheme.shapes.medium,
                 ) {
                     Text(
-                        "No lifecycle events yet.",
+                        "No diagnostic events",
                         modifier = Modifier.padding(16.dp),
                         color = UdroidMuted,
                     )
@@ -1425,19 +1514,18 @@ private fun SupportProjectPanel(
 ) {
     Surface(
         color = UdroidRaised,
-        shape = RoundedCornerShape(14.dp),
-        border = BorderStroke(1.dp, UdroidLine),
+        shape = MaterialTheme.shapes.large,
     ) {
         Column(modifier = Modifier.padding(horizontal = 15.dp, vertical = 13.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(
                     modifier = Modifier.size(38.dp),
                     color = UdroidSoftGreen,
-                    shape = RoundedCornerShape(9.dp),
+                    shape = MaterialTheme.shapes.medium,
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
-                            imageVector = Icons.Outlined.FavoriteBorder,
+                            imageVector = Icons.Rounded.FavoriteBorder,
                             contentDescription = null,
                             modifier = Modifier.size(20.dp),
                             tint = UdroidForest,
@@ -1451,7 +1539,7 @@ private fun SupportProjectPanel(
                         style = MaterialTheme.typography.titleMedium,
                     )
                     Text(
-                        "Star the repository to help others find it, or sponsor ongoing work.",
+                        "Star the repository to help others find it, or sponsor its development",
                         color = UdroidMuted,
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -1480,8 +1568,7 @@ private fun AppUpdateStatusPanel(
 ) {
     Surface(
         color = UdroidRaised,
-        shape = RoundedCornerShape(14.dp),
-        border = BorderStroke(1.dp, UdroidLine),
+        shape = MaterialTheme.shapes.large,
     ) {
         Column {
             Row(
@@ -1491,11 +1578,11 @@ private fun AppUpdateStatusPanel(
                 Surface(
                     modifier = Modifier.size(38.dp),
                     color = UdroidInset,
-                    shape = RoundedCornerShape(9.dp),
+                    shape = MaterialTheme.shapes.medium,
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
-                            imageVector = Icons.Outlined.SystemUpdateAlt,
+                            imageVector = Icons.Rounded.SystemUpdateAlt,
                             contentDescription = null,
                             tint = UdroidForest,
                         )
@@ -1519,7 +1606,7 @@ private fun AppUpdateStatusPanel(
                     onClick = onCheckForUpdates,
                     enabled = state.phase != AppUpdatePhase.CHECKING,
                 ) {
-                    Text(if (state.phase == AppUpdatePhase.CHECKING) "Checking" else "Check")
+                    Text(if (state.phase == AppUpdatePhase.CHECKING) "Checking" else "Check for updates")
                 }
             }
             if (state.phase == AppUpdatePhase.CHECKING) {
@@ -1540,8 +1627,7 @@ private fun JournalRow(line: String) {
     val timestamp = payload?.optString("timestamp").orEmpty()
     Surface(
         color = UdroidRaised,
-        shape = RoundedCornerShape(11.dp),
-        border = BorderStroke(1.dp, UdroidLine),
+        shape = MaterialTheme.shapes.medium,
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
@@ -1590,6 +1676,17 @@ private fun installedSystemTitle(rootfsName: String): String =
         rootfsName.contains("focal", ignoreCase = true) -> "Ubuntu 20.04 LTS"
         else -> rootfsName
     }
+
+private fun distributionFromSystemId(systemId: String): LinuxDistribution {
+    val normalized = systemId.lowercase()
+    return when {
+        "debian" in normalized -> LinuxDistribution.DEBIAN
+        "arch" in normalized -> LinuxDistribution.ARCH
+        "alpine" in normalized -> LinuxDistribution.ALPINE
+        "void" in normalized -> LinuxDistribution.VOID
+        else -> LinuxDistribution.UBUNTU
+    }
+}
 
 private const val GITHUB_REPOSITORY_URL = "https://github.com/RandomCoderOrg/udroid-app"
 private const val GITHUB_SPONSOR_URL = "https://github.com/sponsors/RandomCoderOrg"
